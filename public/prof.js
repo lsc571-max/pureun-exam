@@ -7,6 +7,41 @@ import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, CIRCLED, errTex
 const app = $('app');
 let bind = {}, users = {}, entry = {}, P = null, clockT = 0, liveT = 0, baseSubs = [];
 const LS = { get: k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+/* ----- 되돌리기 · 다시 하기 (Ctrl+Z · Ctrl+Y, 화면 버튼) — 최근 10번까지. 이 탭을 닫으면 사라집니다 ----- */
+const HIST = { undo: [], redo: [] };
+async function record(label, doFn, undoFn) {
+  await doFn();
+  HIST.undo.push({ label, doFn, undoFn }); if (HIST.undo.length > 10) HIST.undo.shift();
+  HIST.redo = []; paintHist();
+}
+function refreshView() { if (P) renderTab(); else if ($('listMain')) viewList(); }
+let histBusy = false;
+async function histStep(from, to, fnKey, done) {
+  if (histBusy) return; const h = from.pop();
+  if (!h) return toast(fnKey === 'undoFn' ? '되돌릴 것이 없어요.' : '다시 할 것이 없어요.');
+  histBusy = true;
+  try { await h[fnKey](); to.push(h); toast(`${done}: ${h.label}`); }
+  catch (e) { from.push(h); toast(errText(e)); }
+  finally { histBusy = false; paintHist(); refreshView(); }
+}
+const histUndo = () => histStep(HIST.undo, HIST.redo, 'undoFn', '되돌렸어요');
+const histRedo = () => histStep(HIST.redo, HIST.undo, 'doFn', '다시 했어요');
+const histButtons = () => `<span class="undoredo"><button data-a="h-undo" id="h-undo" title="되돌리기 (Ctrl+Z)" aria-label="되돌리기">↶</button><button data-a="h-redo" id="h-redo" title="다시 하기 (Ctrl+Y)" aria-label="다시 하기">↷</button></span>`;
+function paintHist() {
+  const u = $('h-undo'), r = $('h-redo'), lu = HIST.undo[HIST.undo.length - 1], lr = HIST.redo[HIST.redo.length - 1];
+  if (u) { u.disabled = !lu; u.title = lu ? `되돌리기: ${lu.label} (Ctrl+Z)` : '되돌릴 것이 없어요'; }
+  if (r) { r.disabled = !lr; r.title = lr ? `다시 하기: ${lr.label} (Ctrl+Y)` : '다시 할 것이 없어요'; }
+}
+on('h-undo', () => histUndo());
+on('h-redo', () => histRedo());
+document.addEventListener('keydown', e => {
+  if (S.role !== 'prof' || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const t = e.target; if (t && t.closest && t.closest('input,textarea,select,[contenteditable]')) return;   // 글 쓰는 칸에서는 글자 되돌리기
+  if (!$('modal').hidden) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); histUndo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); histRedo(); }
+});
 const ST = { draft: ['', '준비 중'], open: ['mid', '대기실 열림'], running: ['ok', '진행 중'], ended: ['', '종료'] };
 const pill = m => { const s = ST[m.status] || ST.draft; return `<span class="pill ${s[0]}">${s[1]}</span>${m.released ? ' <span class="pill blue">결과 공개</span>' : ''}${m.practice ? ' <span class="pill blue">문제풀이 공개</span>' : ''}`; };
 const meta = () => S.exams[P.id] || {};
@@ -16,6 +51,10 @@ const isLeave = e => e.t === 'leave' || e.t === 'unpin' || e.t === 'nopin';
 // 잠겨 있어 교수의 확인이 필요한 학생인가
 const isLocked = a => !!a && !a.submittedAt && C.leaveSummary(a.ev).locks > (a.unlock || 0);
 const totalTime = a => Object.values((a && a.tm) || {}).reduce((x, y) => x + (Number(y) || 0), 0);
+const isTest = sid => /^TEST/.test(String(sid || ''));
+const testPill = sid => (isTest(sid) ? ' <span class="pill blue">테스트</span>' : '');
+// 이름·반: 지금 입장해 있으면 입장 기록에서, 입장이 취소됐으면 시험을 시작할 때 답안에 적어 둔 것에서
+const whoOf = sid => people()[sid] || (P && P.answers[sid] && P.answers[sid].who) || null;
 const LATE = 30;   // 늦게 시작해도 되는 시간(분)의 기본값
 // 학생별 마감 시각: 따로 준 시각이 있으면 그 시각, 없으면 시작한 때 + 시험 시간(+연장). 전체 마감은 넘지 않음
 const dlOf = (m, a) => (!a || !a.startedAt ? 0 : Math.min(m.endAt || 0, a.until || (a.startedAt + (m.minutes || 0) * 60000 + (m.extra || 0))));
@@ -47,7 +86,7 @@ function live() {
 function viewList() {
   const keep = { t: $('n-title') ? $('n-title').value : '', m: $('n-min') ? $('n-min').value : '50', f: document.activeElement && document.activeElement.id };
   const list = Object.entries(S.exams).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
-  app.innerHTML = `<div class="desk"><header><h1>푸른시험</h1>${entry.code ? `<span class="pill blue" style="font-size:16px;padding:3px 12px">입장 코드 ${esc(entry.code)}</span>` : ''}<button data-a="people">학생 · 반 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
+  app.innerHTML = `<div class="desk"><header><h1 data-a="brand">푸른시험</h1>${entry.code ? `<span class="pill blue" style="font-size:16px;padding:3px 12px">입장 코드 ${esc(entry.code)}</span>` : ''}${histButtons()}<button data-a="test-open">학생으로 테스트</button><button data-a="people">학생 · 반 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
     <main id="listMain">
       <div class="panel"><h2>새 시험 만들기</h2>
         <div class="row"><label class="f" style="flex:1;min-width:180px">시험 이름<input class="in" id="n-title" placeholder="예: 기계공작법 중간고사" maxlength="60"></label>
@@ -57,9 +96,10 @@ function viewList() {
       : '<div class="panel"><div class="sm">아직 시험이 없어요. 위에서 새 시험을 만들어 주세요.</div></div>'}
     </main></div>`;
   // 학생이 입장할 때마다 목록을 다시 그리므로, 쓰던 시험 이름이 지워지지 않게 되돌려 놓습니다
+  paintHist();
   $('n-title').value = keep.t; $('n-min').value = keep.m; if (keep.f === 'n-title' || keep.f === 'n-min') $(keep.f).focus();
 }
-on('logout', async () => { if (await confirmBox('로그아웃할까요?', '', '로그아웃')) { closeExam(); await be.signOut(); location.href = './?prof=1'; } });
+on('logout', async () => { if (await confirmBox('로그아웃할까요?', '', '로그아웃')) { closeExam(); try { localStorage.removeItem('pureun:prof'); } catch (e) {} await be.signOut(); location.href = './?prof=1'; } });
 on('new-exam', async () => {
   const title = $('n-title').value.trim(), minutes = Math.round(+$('n-min').value);
   if (!title) return toast('시험 이름을 입력해 주세요.');
@@ -95,7 +135,7 @@ on('code-off', async () => { await setCode(''); toast('입장 코드를 껐어�
 on('unbind-all', async () => {
   const st = students();
   if (!st.length || !(await confirmBox('모든 학생의 입장을 취소할까요?', `${st.length}명이 모두 다시 입장해야 합니다. 저장된 답안은 그대로 남습니다.`, '모두 취소', { danger: true }))) return;
-  await be.update('', { bind: null, users: null }); toast('모두 취소했어요.');
+  await be.update('', { bind: null, users: null }); toast('모두 취소했어요. 답안·점수·이름은 결과에 남아 있습니다.');
   document.querySelector('[data-a=people]')?.click();
 });
 function paintClasses() {
@@ -120,13 +160,13 @@ function paintPeople() {
   if (!st.length) { box.innerHTML = '<div class="sm" style="margin-top:8px">아직 입장한 학생이 없어요.</div>'; return; }
   box.innerHTML = `<div class="sm" style="margin:8px 0 6px">전체 ${st.length}명 (${allClasses().map(c => `${esc(c)} ${cnt(c)}`).join(' · ')})</div>
     <div class="tw" style="max-height:40dvh;overflow:auto"><table><tr><th>반</th><th>학번</th><th>이름</th><th></th></tr>
-    ${st.map(s => `<tr><td>${esc(s.cls)}</td><td>${esc(s.sid)}</td><td>${esc(s.name)}</td><td style="text-align:right"><button class="mini" data-a="unbind" data-sid="${esc(s.sid)}">입장 취소</button></td></tr>`).join('')}
-    </table></div><div class="row" style="margin-top:8px"><button class="mini red" data-a="unbind-all">모두 입장 취소</button></div>`;
+    ${st.map(s => `<tr><td>${esc(s.cls)}</td><td>${esc(s.sid)}</td><td>${esc(s.name)}${testPill(s.sid)}</td><td style="text-align:right"><button class="mini" data-a="unbind" data-sid="${esc(s.sid)}">입장 취소</button></td></tr>`).join('')}
+    </table></div><div class="row" style="margin-top:8px"><button class="mini red" data-a="unbind-all">모두 입장 취소</button>${st.some(x => isTest(x.sid)) ? '<button class="mini" data-a="test-clean">테스트 학생 정리</button>' : ''}</div>`;
 }
 on('unbind', async el => {
   const sid = el.dataset.sid, uid = bind[sid], r = people()[sid] || {};
   const again = !!$('peopleBox');
-  if (!(await confirmBox('입장을 취소할까요?', `${esc(r.name || sid)} 학생이 다시(다른 기기에서도) 입장할 수 있게 됩니다. 저장된 답안은 그대로 남습니다.`, '입장 취소'))) return;
+  if (!(await confirmBox('입장을 취소할까요?', `${esc(r.name || sid)} 학생이 다시(다른 기기에서도) 입장할 수 있게 됩니다. 답안·점수·이름은 결과에 그대로 남습니다.`, '입장 취소'))) return;
   const u = { ['bind/' + sid]: null };
   for (const [k, v] of Object.entries(users)) if ((v && v.sid === sid) || k === uid) u['users/' + k] = null;
   await be.update('', u); toast('취소했어요. 학생이 다시 입장하면 됩니다.');
@@ -136,12 +176,13 @@ on('unbind', async el => {
 /* ================= 시험 하나 열기 ================= */
 async function openExam(id, tab = 'run') {
   closeExam();
-  P = { id, tab, pages: [], imgs: {}, answers: {}, essay: {}, sel: new Set(), cls: '', rtab: 'rank', gq: '', blind: true, unsubs: [], sheetOpts: {} };
+  P = { id, tab, pages: [], imgs: {}, answers: {}, essay: {}, trash: {}, sel: new Set(), cls: '', rtab: 'rank', gq: '', blind: true, unsubs: [], sheetOpts: {} };
   const [draft, imgs] = await Promise.all([be.get('drafts/' + id), be.get('images/' + id)]);
   if (!P || P.id !== id) return;
   P.pages = questionsOnly(parse(draft, []).map(C.normalizePage)); P.imgs = imgs || {};
   P.unsubs.push(be.on('answers/' + id, v => { P.answers = v || {}; live(); }));
   P.unsubs.push(be.on('essay/' + id, v => { P.essay = v || {}; live(); }));
+  P.unsubs.push(be.on('trash/' + id, v => { P.trash = v || {}; if (P.tab === 'result') live(); }));
   app.innerHTML = `<div class="desk"><header id="phead"></header><main><div class="tabs" id="ptabs"></div><div id="pmain" style="display:flex;flex-direction:column;gap:14px"></div></main></div>`;
   paintHead(); renderTab();
   clockT = setInterval(paintClock, 1000);
@@ -152,8 +193,8 @@ on('p-back', () => { closeExam(); viewList(); });
 function paintHead() {
   if (!P || !$('phead')) return;
   const m = meta();
-  $('phead').innerHTML = `<button data-a="p-back">← 목록</button><h1>${esc(m.title || '')}</h1><span>${pill(m)}</span><button class="band" id="pband" data-a="p-band" hidden></button>`;
-  paintBand();
+  $('phead').innerHTML = `<button data-a="p-back">← 목록</button><h1 data-a="brand">${esc(m.title || '')}</h1><span>${pill(m)}</span>${histButtons()}<button data-a="test-open">학생으로 테스트</button><button class="band" id="pband" data-a="p-band" hidden></button>`;
+  paintBand(); paintHist();
   $('ptabs').innerHTML = [['run', '진행'], ['edit', '문항'], ['grade', '채점'], ['result', '결과']].map(([k, n]) => `<button data-a="p-tab" data-t="${k}" class="${P.tab === k ? 'on' : ''}">${n}</button>`).join('');
 }
 on('p-band', () => { P.tab = 'run'; hideCtx(); paintHead(); renderTab(); });
@@ -219,7 +260,7 @@ function tabRun() {
   const m = meta(), v = C.validateBundle(P.pages), { sheet, key } = exam(), ppl = people();
   const sids = [...new Set([...Object.keys(ppl), ...Object.keys(P.answers)])];
   const rows = sids.map(sid => {
-    const r = ppl[sid] || { name: '(입장 취소됨)', cls: '' }, a = P.answers[sid], lv = C.leaveSummary(a && a.ev);
+    const r = whoOf(sid) || { name: '(이름 없음)', cls: '' }, a = P.answers[sid], lv = C.leaveSummary(a && a.ev);
     return { sid, ...r, a, lv, cnt: a && a.a ? Object.values(a.a).filter(x => x !== '' && x != null).length : 0 };
   }).filter(r => !P.cls || r.cls === P.cls).sort((a, b) => String(a.cls).localeCompare(String(b.cls)) || a.sid.localeCompare(b.sid));
   const sub = rows.filter(r => r.a && r.a.submittedAt), go = rows.filter(r => r.a && r.a.startedAt && !r.a.submittedAt), wait = rows.filter(r => !(r.a && r.a.startedAt));
@@ -243,14 +284,14 @@ function tabRun() {
     </div>
     <div class="panel"><div class="row"><h2 style="margin-right:auto">학생별 현황</h2>${clsFilter()}</div>
       <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>상태</th><th class="num">남은 시간</th><th class="num">답한 문항</th><th class="num">이탈</th>${m.cam ? '<th class="num">카메라 경고</th><th class="num">잠금</th>' : ''}<th></th></tr>
-      ${rows.map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td>
+      ${rows.map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}${testPill(r.sid)}${bind[r.sid] ? '' : ' <span class="pill">입장 취소됨</span>'}</td>
         <td>${r.a && r.a.submittedAt ? `<span class="pill ok">제출 ${hhmmss(r.a.submittedAt)}</span>` : r.a && r.a.startedAt ? '<span class="pill blue">응시 중</span>' : '<span class="pill mid">입장</span>'}${r.a && r.a.dev ? ` <span class="pill">${r.a.dev.startsWith('app') ? '앱' : '웹'}</span>` : ''}</td>
         <td class="num" ${r.a && r.a.startedAt && !r.a.submittedAt ? `data-dl="${dlOf(m, r.a)}"` : ''}></td>
         <td class="num">${r.a ? `${r.cnt} / ${sheet.length}` : ''}</td>
         <td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td>
         ${m.cam ? `<td class="num">${r.lv.face ? `<button class="mini" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.face}회</button>` : ''}${r.lv.camOff ? ' <span class="pill mid">카메라 꺼짐</span>' : ''}</td>
         <td class="num">${r.lv.locks ? `${r.lv.locks}회` : ''}${isLocked(r.a) ? ` <button class="mini red" data-a="unlock" data-sid="${esc(r.sid)}">잠금 해제</button>` : ''}</td>` : ''}
-        <td style="white-space:nowrap;text-align:right">${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">입장 취소</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button>` : ''}</td></tr>`).join('')}
+        <td style="white-space:nowrap;text-align:right">${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">입장 취소</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button> ` : ''}${r.a ? `<button class="mini red" data-a="stu-del" data-sid="${esc(r.sid)}">지우기</button>` : ''}</td></tr>`).join('')}
       </table></div>${rows.length ? '' : '<div class="sm">아직 입장한 학생이 없어요. 학생이 반·학번·이름을 입력하고 들어오면 여기에 나타납니다.</div>'}</div>`;
 }
 const setMeta = patch => be.update('exams/' + P.id, patch);
@@ -326,7 +367,7 @@ on('unlock', async el => {
   toast('잠금을 풀었어요.');
 });
 on('lv-show', el => {
-  const sid = el.dataset.sid, r = people()[sid] || {}, lv = C.leaveSummary((P.answers[sid] || {}).ev);
+  const sid = el.dataset.sid, r = whoOf(sid) || {}, lv = C.leaveSummary((P.answers[sid] || {}).ev);
   const name = C.EV_NAME;
   modal(`<h2>${esc(r.cls || '')} ${esc(sid)} ${esc(r.name || '')} — 이탈 ${lv.count}회 · 카메라 경고 ${lv.face}회 · 잠금 ${lv.locks}회</h2>
     <div class="tw"><table><tr><th>시각</th><th>내용</th></tr>${lv.list.map(e => `<tr><td>${hhmmss(e.at)}</td><td>${esc(name[e.t] || e.t)}</td></tr>`).join('')}</table></div>
@@ -365,27 +406,35 @@ on('s-save', async () => {
 });
 on('ex-wipe', async () => {
   if (!(await confirmBox('답안을 모두 지울까요?', '이 시험의 모든 학생 답안, 이탈 기록, 장문형 점수가 지워지고 시험이 "준비 중"으로 돌아갑니다. <b>되돌릴 수 없습니다.</b>', '모두 지우기', { danger: true }))) return;
-  await be.update('', { ['answers/' + P.id]: null, ['essay/' + P.id]: null, [`exams/${P.id}/status`]: 'draft', [`exams/${P.id}/released`]: false, [`exams/${P.id}/startAt`]: null, [`exams/${P.id}/endAt`]: null });
+  await be.update('', { ['answers/' + P.id]: null, ['essay/' + P.id]: null, ['trash/' + P.id]: null, [`exams/${P.id}/status`]: 'draft', [`exams/${P.id}/released`]: false, [`exams/${P.id}/startAt`]: null, [`exams/${P.id}/endAt`]: null });
   closeModal(); toast('지웠어요.');
 });
 on('ex-delete', async () => {
   if (!(await confirmBox('이 시험을 삭제할까요?', '문항, 답안, 점수가 모두 지워집니다. <b>되돌릴 수 없습니다.</b>', '삭제', { danger: true }))) return;
   const id = P.id; closeExam(); closeModal();
-  await be.update('', Object.fromEntries(['exams', 'drafts', 'sheets', 'keys', 'images', 'answers', 'essay'].map(k => [`${k}/${id}`, null])));
+  await be.update('', Object.fromEntries(['exams', 'drafts', 'sheets', 'keys', 'images', 'answers', 'essay', 'trash'].map(k => [`${k}/${id}`, null])));
   viewList();
 });
 
 /* ================= 문항 편집 ================= */
-async function savePages(pages) {
-  P.pages = C.ensureIds(pages);
-  const x = C.splitExam(P.pages), v = C.validateBundle(P.pages), at = be.now(), id = P.id;
+// 문항을 저장합니다. 교수용 원본, 학생용 문제지(정답 없음), 정답지를 함께 씁니다.
+async function savePagesFor(id, pages) {
+  pages = C.ensureIds(pages);
+  const x = C.splitExam(pages), v = C.validateBundle(pages), at = be.now();
   await be.update('', {
-    ['drafts/' + id]: { data: JSON.stringify(P.pages), at },
+    ['drafts/' + id]: { data: JSON.stringify(pages), at },
     ['sheets/' + id]: { data: JSON.stringify(x.sheet), at },   // 학생용: 정답·해설 없음
     ['keys/' + id]: { data: JSON.stringify(x.key), at },       // 교수용 / 공개 후 학생
     [`exams/${id}/n`]: v.stats.n, [`exams/${id}/total`]: v.stats.total,
   });
+  if (P && P.id === id) P.pages = pages;
 }
+// 문항을 바꾸고, 되돌리기(Ctrl+Z) 기록에 남깁니다
+async function changePages(next, label) {
+  const id = P.id, before = P.pages.slice(), after = C.ensureIds(next);
+  await record(label, () => savePagesFor(id, after), () => savePagesFor(id, before));
+}
+
 const srcOf = p => !p.img ? '' : p.img.startsWith('img:') ? (P.imgs[p.img.slice(4)] || '') : p.img;
 const answerLabel = p => {
   const k = C.kindOf(p);
@@ -425,9 +474,8 @@ function tabEdit() {
 const selected = () => [...P.sel].filter(i => i < P.pages.length).sort((a, b) => a - b);
 // 지운 직후에는 되돌릴 수 있게 합니다
 async function removePages(idx) {
-  const before = P.pages.slice(), id = P.id;
-  P.sel.clear(); await savePages(P.pages.filter((_, i) => !idx.includes(i))); tabEdit();
-  toast(`${idx.length}쪽을 지웠어요.`, 7000, { label: '되돌리기', fn: async () => { if (!P || P.id !== id) return; await savePages(before); if (P.tab === 'edit') tabEdit(); toast('되돌렸어요.'); } });
+  P.sel.clear(); await changePages(P.pages.filter((_, i) => !idx.includes(i)), `문항 ${idx.length}개 지우기`); tabEdit();
+  toast(`${idx.length}쪽을 지웠어요.`, 7000, { label: '되돌리기 (Ctrl+Z)', fn: () => histUndo() });
 }
 on('ed-rm', el => removePages([+el.dataset.i]));
 on('ed-del', () => { const sel = selected(); if (!sel.length) return toast('지울 문항을 먼저 골라 주세요(왼쪽 네모).'); return removePages(sel); });
@@ -435,12 +483,12 @@ on('ed-add', async () => {
   const a = P.pages.slice();
   const blank = C.normalizePage({ t: 'choice', q: '', opts: ['', '', '', ''], a: 0, why: '', level: '중', pts: 4 });
   const at = a.length; a.push(blank);
-  await savePages(a); tabEdit(); editPage(at);
+  await changePages(a, '빈 문항 추가'); tabEdit(); editPage(at);
 });
 async function movePage(from, to) {   // to: 옮긴 뒤의 자리
   if (from === to || from < 0 || to < 0) return;
   const a = P.pages.slice(), [x] = a.splice(from, 1); a.splice(to, 0, x);
-  P.sel.clear(); await savePages(a); tabEdit();
+  P.sel.clear(); await changePages(a, '문항 순서 바꾸기'); tabEdit();
 }
 /* 끌어서 순서 바꾸기 (마우스·손가락 모두) */
 let DR = null;
@@ -486,7 +534,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') hideCtx(); }
 on('ed-dup', async el => {
   const i = +el.dataset.i, a = P.pages.slice(), { id, ...copy } = a[i];
   a.splice(i + 1, 0, JSON.parse(JSON.stringify(copy)));
-  P.sel.clear(); await savePages(a); tabEdit(); toast('복제했어요.');
+  P.sel.clear(); await changePages(a, '문항 복제'); tabEdit(); toast('복제했어요.');
 });
 
 /* ----- 붙여 넣기 ----- */
@@ -528,7 +576,7 @@ on('p-apply', async el => {
   } catch (e) { return toast(e.message, 4000); }
   // 붙여 넣은 JSON 안에 사진 자료(data:)가 있으면 사진 보관함으로 옮깁니다
   for (const p of next) if (p.img && p.img.startsWith('data:')) { const k = C.newId(); await be.set(`images/${P.id}/${k}`, p.img); P.imgs[k] = p.img; p.img = 'img:' + k; }
-  P.sel.clear(); await savePages(next); closeModal(); tabEdit(); toast('넣었어요.');
+  P.sel.clear(); await changePages(next, '문항 붙여 넣기'); closeModal(); tabEdit(); toast('넣었어요.');
 });
 
 /* ----- 문항 하나 고치기 ----- */
@@ -608,7 +656,7 @@ on('f-save', async () => {
     p = C.normalizePage(raw);
   }
   const a = P.pages.slice(); a[E.i] = p;
-  await savePages(a); closeModal(); tabEdit();
+  await changePages(a, '문항 고치기'); closeModal(); tabEdit();
 });
 
 /* ----- 복사 버튼 3개 ----- */
@@ -701,7 +749,7 @@ function tabGrade() {
       ${q.model ? `<div class="box ok"><b>모범 답안</b>\n${esc(q.model)}</div>` : ''}${q.why ? `<div class="box info"><b>채점 기준</b>\n${esc(q.why)}</div>` : ''}
       <div class="row"><span class="sm" style="margin-right:auto" id="g-prog">배점 ${q.pts}점 · 채점 ${done} / ${list.length}명</span><button class="mini" data-a="g-blind">${P.blind ? '이름 보이기' : '이름 가리기'}</button><button class="mini" data-a="g-refresh">새 답안 불러오기</button></div></div>
     ${list.map((s, i) => {
-      const r = people()[s.sid] || {}, g = (P.essay[s.sid] || {})[q.id];
+      const r = whoOf(s.sid) || {}, g = (P.essay[s.sid] || {})[q.id];
       return `<div class="panel" data-sid="${esc(s.sid)}"><div class="sm">${P.blind ? `답안 ${i + 1}` : `${esc(r.cls || '')} ${esc(s.sid)} ${esc(r.name || '')}`}</div><div class="txt">${esc(s.text)}</div>
         ${step ? `<div class="scores">${step.map(v => `<button data-a="g-set" data-sid="${esc(s.sid)}" data-v="${v}" class="${g === v ? 'on' : ''}">${v}</button>`).join('')}</div>`
         : `<div class="row"><input class="in g-num" type="number" min="0" max="${q.pts}" step="0.5" value="${typeof g === 'number' ? g : ''}" data-sid="${esc(s.sid)}" style="width:120px;font-size:16px;padding:8px"><span class="sm">/ ${q.pts}점 — 입력하고 칸 밖을 누르면 저장</span></div>`}</div>`;
@@ -728,7 +776,7 @@ async function setAccepted(text, accept) {
   const answers = accept ? [...(p.answers || []), text] : (p.answers || []).filter(x => C.normAns(x) !== n);
   if (!answers.length) return toast('정답이 하나는 있어야 해요.');
   const a = P.pages.slice(); a[i] = C.normalizePage({ ...p, answers });
-  await savePages(a); tabGrade(); toast(accept ? `"${text}" 을(를) 정답으로 인정했어요.` : '인정을 취소했어요.');
+  await changePages(a, accept ? '단답형 정답 인정' : '단답형 인정 취소'); tabGrade(); toast(accept ? `"${text}" 을(를) 정답으로 인정했어요.` : '인정을 취소했어요.');
 }
 on('g-accept', el => setAccepted(el.dataset.t, true));
 on('g-reject', el => setAccepted(el.dataset.t, false));
@@ -737,7 +785,7 @@ on('g-reject', el => setAccepted(el.dataset.t, false));
 function resultRows() {
   const ppl = people(), { sheet, key } = exam(), sids = new Set([...Object.keys(ppl), ...Object.keys(P.answers)]);
   const rows = [...sids].map(sid => {
-    const r = ppl[sid] || { name: '(입장 취소됨)', cls: '' }, a = P.answers[sid], sc = C.scoreStudent(sheet, key, a && a.a, P.essay[sid]);
+    const r = whoOf(sid) || { name: '(이름 없음)', cls: '' }, a = P.answers[sid], sc = C.scoreStudent(sheet, key, a && a.a, P.essay[sid]);
     return { sid, name: r.name, cls: r.cls, took: !!(a && a.startedAt), a, lv: C.leaveSummary(a && a.ev), ...sc };
   });
   return { sheet, key, rows };
@@ -749,13 +797,21 @@ function tabResult() {
   const pend = took.reduce((n, r) => n + r.essayPending, 0), max = sheet.reduce((n, q) => n + q.pts, 0);
   const stats = C.questionStats(sheet, key, took.map(r => ({ answers: (r.a && r.a.a) || {}, essay: P.essay[r.sid] || {} })));
   P.sheetOpts = Object.fromEntries(sheet.map(q => [q.id, q.opts || []]));
-  const sub = [['rank', '순위'], ['chart', '그래프'], ['miss', '많이 틀린 문제'], ['leave', '이탈 기록']];
+  const nTrash = Object.keys(P.trash || {}).length;
+  const sub = [['rank', '순위'], ['chart', '그래프'], ['miss', '많이 틀린 문제'], ['leave', '이탈 기록'], ['trash', `휴지통${nTrash ? ' ' + nTrash : ''}`]];
   let body = '';
-  if (P.rtab === 'rank') body = `<div class="sm">이름을 누르면 그 학생이 무엇을 틀렸는지 볼 수 있습니다.</div><div class="tw"><table><tr><th class="num">순위</th><th>반</th><th>학번</th><th>이름</th><th class="num">총점</th><th class="num">자동 채점</th><th class="num">장문형</th><th class="num">이탈</th><th class="num">카메라 경고 · 잠금</th><th class="num">풀이 시간</th><th>제출</th></tr>
-    ${rk.map(r => `<tr><td class="num"><b>${r.rank}</b></td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td><button class="namebtn" data-a="stu-detail" data-sid="${esc(r.sid)}">${esc(r.name)}</button></td><td class="num"><b>${r.total}</b></td><td class="num">${r.mc}</td><td class="num">${r.essay}${r.essayPending ? ' <span class="pill mid">채점 전</span>' : ''}</td><td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td><td class="num">${r.lv.face || r.lv.locks ? `${r.lv.face} · ${r.lv.locks}` : ''}</td><td class="num">${totalTime(r.a) ? C.fmtDur(totalTime(r.a)) : ''}</td><td>${r.a.submittedAt ? hhmmss(r.a.submittedAt) : '<span class="pill">미제출</span>'}</td></tr>`).join('')}
-    ${absent.map(r => `<tr><td class="num">—</td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td><td colspan="7"><span class="pill no">미응시</span></td></tr>`).join('')}</table></div>${rk.length || absent.length ? '' : '<div class="sm">아직 응시한 학생이 없어요.</div>'}`;
+  if (P.rtab === 'rank') body = `<div class="sm">이름을 누르면 그 학생이 무엇을 틀렸는지 볼 수 있습니다.</div><div class="tw"><table><tr><th class="num">순위</th><th>반</th><th>학번</th><th>이름</th><th class="num">총점</th><th class="num">자동 채점</th><th class="num">장문형</th><th class="num">이탈</th><th class="num">카메라 경고 · 잠금</th><th class="num">풀이 시간</th><th>제출</th><th></th></tr>
+    ${rk.map(r => `<tr><td class="num"><b>${r.rank}</b></td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td><button class="namebtn" data-a="stu-detail" data-sid="${esc(r.sid)}">${esc(r.name)}</button>${testPill(r.sid)}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.mc}</td><td class="num">${r.essay}${r.essayPending ? ' <span class="pill mid">채점 전</span>' : ''}</td><td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td><td class="num">${r.lv.face || r.lv.locks ? `${r.lv.face} · ${r.lv.locks}` : ''}</td><td class="num">${totalTime(r.a) ? C.fmtDur(totalTime(r.a)) : ''}</td><td>${r.a.submittedAt ? hhmmss(r.a.submittedAt) : '<span class="pill">미제출</span>'}</td><td><button class="mini red" data-a="stu-del" data-sid="${esc(r.sid)}">지우기</button></td></tr>`).join('')}
+    ${absent.map(r => `<tr><td class="num">—</td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}${testPill(r.sid)}</td><td colspan="8"><span class="pill no">미응시</span></td></tr>`).join('')}</table></div>${rk.length || absent.length ? '' : '<div class="sm">아직 응시한 학생이 없어요.</div>'}`;
   else if (P.rtab === 'chart') body = `<h2>점수 분포</h2>${histChart(tot, max)}<h2 style="margin-top:8px">문항별 응답</h2><div class="sm">초록 막대(✓)가 정답, 분홍 막대는 가장 많이 고른 오답입니다.</div>${questionCharts(stats)}`;
   else if (P.rtab === 'miss') body = C.mostMissed(stats, 5).map(s => `<div class="box ${s.rate < .4 ? 'no' : 'warn'}"><b>${s.no}번 · ${s.auto ? `정답률 ${Math.round(s.rate * 100)}%` : `평균 ${s.avg.toFixed(1)} / ${s.pts}점`} · 난이도 ${esc(s.level || '')}</b>\n${esc(s.q)}${s.auto ? `\n정답: ${esc(s.answerText)}${s.topWrongText ? `\n가장 많이 고른 오답: ${esc(s.topWrongText)} (${s.choice ? s.picks[s.topWrong] : s.topWrongN}명)` : ''}` : ''}</div>`).join('') || '<div class="sm">아직 응시한 학생이 없어요.</div>';
+  else if (P.rtab === 'trash') {
+    const tr = Object.entries(P.trash || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+    body = `<div class="sm">지운 학생은 여기에 모입니다. <b>되살리기</b>를 누르면 답안·점수·이탈 기록이 그대로 돌아옵니다. <b>휴지통 비우기</b>를 누르면 완전히 지워집니다.</div>
+      <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>지운 시각</th><th></th></tr>
+      ${tr.map(([sid, t]) => `<tr><td>${esc((t.who || {}).cls || '')}</td><td>${esc(sid)}</td><td>${esc((t.who || {}).name || '')}${testPill(sid)}</td><td>${hhmmss(t.at)}</td><td style="text-align:right"><button class="mini ok" data-a="trash-back" data-sid="${esc(sid)}">되살리기</button></td></tr>`).join('') || '<tr><td colspan="5">휴지통이 비어 있습니다.</td></tr>'}</table></div>
+      ${tr.length ? '<div class="row"><button class="btn s gh" style="color:var(--red)" data-a="trash-empty">휴지통 비우기</button></div>' : ''}`;
+  }
   else body = `<div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th class="num">횟수</th><th>시각</th></tr>
     ${took.filter(r => r.lv.count).sort((a, b) => b.lv.count - a.lv.count).map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td><td class="num">${r.lv.count}</td><td>${r.lv.list.filter(isLeave).map(e => hhmmss(e.at) + (e.t === 'unpin' ? '(고정 풀림)' : '')).join(', ')}</td></tr>`).join('') || '<tr><td colspan="5">이탈 기록이 없습니다.</td></tr>'}</table></div>`;
   $('pmain').innerHTML = `
@@ -893,4 +949,47 @@ on('pdf-all', () => {
     <table><tr><th>번호</th><th>문제</th><th>유형</th><th>난이도</th><th>배점</th><th>정답</th><th>정답률</th><th>가장 많이 고른 오답</th></tr>
     ${stats.map(s => `<tr class="${s.auto && s.rate < .4 ? 'bad' : ''}"><td class="c">${s.no}</td><td>${esc(s.q)}</td><td class="c">${C.KIND_NAME[s.k]}</td><td class="c">${esc(s.level || '')}</td><td class="c">${s.pts}</td><td class="pre">${esc(s.auto ? s.answerText : '(교수 채점)')}</td><td class="c">${s.auto ? Math.round(s.rate * 100) + '%' : `평균 ${s.avg.toFixed(1)}`}</td><td class="pre">${s.auto && s.topWrongText ? `${esc(s.topWrongText)} (${s.choice ? s.picks[s.topWrong] : s.topWrongN}명)` : ''}</td></tr>`).join('')}</table>
     <div class="pr-foot">푸른시험 · ${today()} 출력</div></section>`, `${fileName(d.m.title)}_전체 결과${P.cls ? '_' + P.cls : ''}`);
+});
+
+/* ================= 학생 지우기 · 휴지통 · 테스트 학생 정리 ================= */
+// 지운 학생은 이 시험의 휴지통으로 옮깁니다(언제든 되살릴 수 있음). Ctrl+Z 로 바로 되돌릴 수도 있습니다.
+on('stu-del', async el => {
+  const id = P.id, sid = el.dataset.sid, w = whoOf(sid) || {}, m = meta();
+  const [a, es] = await Promise.all([be.get(`answers/${id}/${sid}`), be.get(`essay/${id}/${sid}`)]);
+  if (!a && !es) return toast('지울 기록이 없어요.');
+  const busy = a && a.startedAt && !a.submittedAt && m.status === 'running';
+  if (!(await confirmBox(`${w.name || sid} 학생을 지울까요?`, `${esc(w.cls || '')} ${esc(sid)} ${esc(w.name || '')} 학생의 답안, 점수, 이탈 기록이 이 시험 결과에서 빠지고 <b>휴지통</b>으로 갑니다. 휴지통에서 언제든 되살릴 수 있습니다.${busy ? '\n\n<b>이 학생은 지금 시험을 보는 중입니다.</b> 지우면 지금까지의 답이 결과에서 빠집니다.' : ''}`, '지우기', { danger: true }))) return;
+  const rec = { answers: a || null, essay: es || null, who: { name: w.name || '', cls: w.cls || '' }, at: be.now() };
+  await record(`${w.name || sid} 학생 지우기`,
+    () => be.update('', { [`answers/${id}/${sid}`]: null, [`essay/${id}/${sid}`]: null, [`trash/${id}/${sid}`]: rec }),
+    () => be.update('', { [`answers/${id}/${sid}`]: a || null, [`essay/${id}/${sid}`]: es || null, [`trash/${id}/${sid}`]: null }));
+  closeModal(); toast('지웠어요. 휴지통에 있습니다.', 7000, { label: '되돌리기 (Ctrl+Z)', fn: () => histUndo() });
+});
+on('trash-back', async el => {
+  const id = P.id, sid = el.dataset.sid, t = (P.trash || {})[sid]; if (!t) return;
+  if (await be.get(`answers/${id}/${sid}`)) return toast('같은 학번의 기록이 이미 있어 되살릴 수 없어요. 그 기록을 먼저 지워 주세요.', 5000);
+  await record(`${(t.who || {}).name || sid} 학생 되살리기`,
+    () => be.update('', { [`answers/${id}/${sid}`]: t.answers || null, [`essay/${id}/${sid}`]: t.essay || null, [`trash/${id}/${sid}`]: null }),
+    () => be.update('', { [`answers/${id}/${sid}`]: null, [`essay/${id}/${sid}`]: null, [`trash/${id}/${sid}`]: t }));
+  toast('되살렸어요.');
+});
+on('trash-empty', async () => {
+  const id = P.id, all = P.trash || {}, n = Object.keys(all).length; if (!n) return;
+  if (!(await confirmBox('휴지통을 비울까요?', `휴지통의 ${n}명이 <b>완전히 지워집니다.</b> 이 탭을 닫으면 되살릴 수 없습니다.`, '비우기', { danger: true }))) return;
+  await record(`휴지통 비우기 (${n}명)`, () => be.set('trash/' + id, null), () => be.set('trash/' + id, all));
+});
+// 교수 기기에서 만든 테스트 학생(학번이 TEST로 시작)을 모든 시험에서 한 번에 정리합니다
+on('test-clean', async () => {
+  const again = !!$('peopleBox');   // 확인 창이 학생 목록을 닫으므로, 끝나면 다시 엽니다
+  const [allAns, allEssay] = await Promise.all([be.get('answers'), be.get('essay')]);
+  const del = {}, back = {}; let n = 0;
+  for (const [k, v] of Object.entries(users)) if (v && isTest(v.sid)) { del['users/' + k] = null; back['users/' + k] = v; }
+  for (const [sid, uid] of Object.entries(bind)) if (isTest(sid)) { del['bind/' + sid] = null; back['bind/' + sid] = uid; }
+  for (const [e, mm] of Object.entries(allAns || {})) for (const [sid, a] of Object.entries(mm || {})) if (isTest(sid)) { del[`answers/${e}/${sid}`] = null; back[`answers/${e}/${sid}`] = a; n++; }
+  for (const [e, mm] of Object.entries(allEssay || {})) for (const [sid, v] of Object.entries(mm || {})) if (isTest(sid)) { del[`essay/${e}/${sid}`] = null; back[`essay/${e}/${sid}`] = v; }
+  if (!Object.keys(del).length) return toast('정리할 테스트 학생이 없어요.');
+  if (!(await confirmBox('테스트 학생을 정리할까요?', `학번이 TEST로 시작하는 학생의 입장 기록과 모든 시험의 답안 ${n}건을 지웁니다. 실제 학생은 그대로입니다. 바로 뒤라면 Ctrl+Z 로 되돌릴 수 있습니다.`, '정리', { danger: true }))) return;
+  await record('테스트 학생 정리', () => be.update('', del), () => be.update('', back));
+  toast('정리했어요.', 7000, { label: '되돌리기 (Ctrl+Z)', fn: () => histUndo() });
+  if (again) document.querySelector('[data-a=people]')?.click();
 });

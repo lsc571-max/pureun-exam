@@ -1,7 +1,8 @@
 // 자동 화면 테스트용 가짜 서버 (localhost 에서 ?mock 으로만 켜지고, 배포에는 올라가지 않습니다)
 // 데이터는 localStorage 에 두어 여러 탭(교수·학생)이 함께 봅니다. 로그인은 탭마다 따로(sessionStorage).
 
-export async function createBackend() {
+export async function createBackend(config, opts = {}) {
+  const UKEY = 'mockuser' + (opts.name ? ':' + opts.name : '');
   const KEY = 'mockdb', bc = new BroadcastChannel('mockdb');
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } };
   const subs = new Set(), authCbs = new Set();
@@ -19,8 +20,8 @@ export async function createBackend() {
   bc.onmessage = fire;
   const commit = db => { localStorage.setItem(KEY, JSON.stringify(db)); bc.postMessage(1); fire(); };
   let user = null;
-  try { user = JSON.parse(sessionStorage.getItem('mockuser') || 'null'); } catch (e) {}
-  const setUser = u => { user = u; sessionStorage.setItem('mockuser', JSON.stringify(u)); authCbs.forEach(f => f(u)); };
+  try { user = JSON.parse(sessionStorage.getItem(UKEY) || 'null'); } catch (e) {}
+  const setUser = u => { user = u; sessionStorage.setItem(UKEY, JSON.stringify(u)); authCbs.forEach(f => f(u)); };
   const deny = () => { const e = new Error('PERMISSION_DENIED'); e.code = 'PERMISSION_DENIED'; return e; };
 
   // 실제 보안 규칙 중 화면 흐름에 영향을 주는 것만 흉내 냅니다 (전체 규칙은 tests/rules.test.js 가 검사)

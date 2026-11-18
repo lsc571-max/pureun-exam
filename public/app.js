@@ -17,7 +17,11 @@ const CONFIG = {
 };
 const Q = new URLSearchParams(location.search);
 const MOCK = Q.has('mock') && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
-const WANT_PROF = Q.has('prof');
+// ?test=번호 : 교수 기기에서 여는 '테스트 학생' 화면. 교수 로그인과 따로, 이 탭에만 학생 로그인을 둡니다.
+const TEST = /^\d{1,3}$/.test(Q.get('test') || '') ? Q.get('test') : '';
+const WANT_PROF = Q.has('prof') && !TEST;
+const PROF_HERE = 'pureun:prof';   // 이 기기에서 교수님이 로그인한 적이 있으면 '1' (실제 학생 기기에는 없음)
+const urlFor = q => './?' + [q, MOCK ? 'mock=1' : ''].filter(Boolean).join('&');
 const app = $('app');
 const who = () => (S.me ? `${S.me.cls} ${S.me.sid} ${S.me.name}` : '');
 const LS = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
@@ -26,12 +30,13 @@ const LS = { get: k => { try { return localStorage.getItem(k); } catch (e) { ret
 const within = (p, ms = 8000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('network timeout')), ms))]);
 
 /* ================= 시작 · 로그인 ================= */
-let unsubExams = null, unsubCls = null, unsubNeed = null, profMod = null;
+let unsubExams = null, unsubCls = null, unsubNeed = null, unsubMe = null, profMod = null;
 async function boot() {
-  try { setBackend(await (MOCK ? import('./mock.js') : import('./fb.js')).then(m => m.createBackend(CONFIG))); }
+  if (TEST) document.title = `[테스트 학생 ${TEST}] 푸른시험`;
+  try { setBackend(await (MOCK ? import('./mock.js') : import('./fb.js')).then(m => m.createBackend(CONFIG, TEST ? { name: 'test' + TEST, session: true } : {}))); }
   catch (e) { app.innerHTML = shell('<div class="h1">연결하지 못했어요</div><div class="txt">인터넷 연결을 확인한 뒤 다시 시도해 주세요.</div><button class="btn am" style="flex:none" data-a="reload">다시 시도</button>', true); return; }
   be.onAuth(async u => {
-    stopExam(); if (unsubExams) { unsubExams(); unsubExams = null; } if (unsubCls) { unsubCls(); unsubCls = null; } if (unsubNeed) { unsubNeed(); unsubNeed = null; }
+    stopExam(); if (unsubExams) { unsubExams(); unsubExams = null; } if (unsubCls) { unsubCls(); unsubCls = null; } if (unsubNeed) { unsubNeed(); unsubNeed = null; } if (unsubMe) { unsubMe(); unsubMe = null; }
     S.user = u; S.role = ''; S.me = null;
     try {
       if (!u) { if (WANT_PROF) return viewProfLogin(); await be.signInAnon(); return; }
@@ -41,6 +46,8 @@ async function boot() {
         if (WANT_PROF) return viewProfLogin();
         S.role = 'student';
         S.me = await be.get('users/' + u.uid);
+        // 교수님이 '입장 취소'를 누르면 이 기록이 지워집니다. 껐다 켜지 않아도 바로 입장 화면으로 돌아갑니다.
+        unsubMe = be.on('users/' + u.uid, v => { if (!v && S.me && S.role === 'student') entryCancelled(); });
         unsubExams = be.on('exams', v => { S.exams = v || {}; onExams(); });
         if (!S.me) viewEntry();
       } else {
@@ -48,6 +55,7 @@ async function boot() {
         if (!ok) { try { await be.set('admins/' + u.uid, true); ok = true; } catch (e) { ok = false; } } // 맨 처음 로그인한 교수 계정만 등록됨
         if (!ok) { await be.signOut(); return viewProfLogin('이 계정은 교수 계정으로 등록되어 있지 않아요.'); }
         S.role = 'prof';
+        LS.set(PROF_HERE, '1');
         profMod = profMod || await import('./prof.js');
         unsubExams = be.on('exams', v => { S.exams = v || {}; profMod.onExams(); });
         profMod.start();
@@ -56,6 +64,34 @@ async function boot() {
   });
 }
 on('reload', () => location.reload());
+// 입장이 취소됨: 풀던 답은 이 기기에 남겨 두고(다시 입장하면 이어서 보냄) 입장 화면으로 돌아갑니다
+function entryCancelled() {
+  if (X) { flushTyping(); try { X.store.close(false); } catch (e) {} X.done = true; stopExam(); }
+  closeModal(); clearInterval(noticeT); S.me = null; view = ''; N = null; R = null;
+  viewEntry('입장이 취소되었습니다. 반·학번·이름을 다시 입력해 입장해 주세요. 풀던 답은 이 기기에 남아 있어 이어서 풀 수 있습니다.');
+}
+// 테스트 학생 화면 맨 위 띠
+const testRibbon = () => (TEST ? `<div class="testband">테스트 학생 ${TEST} · 실제 학생처럼 기록됩니다 · '푸른시험'을 5번 누르면 교수 화면</div>` : '');
+// '푸른시험' 글자를 5번 빠르게 누르면 교수 화면 ↔ 테스트 학생 화면 (교수님이 로그인한 적 있는 기기에서만)
+let brandN = 0, brandT = 0;
+on('brand', () => {
+  if (LS.get(PROF_HERE) !== '1' || (X && !X.done)) return;
+  const now = Date.now(); brandN = now - brandT < 1500 ? brandN + 1 : 1; brandT = now;
+  if (brandN < 5) return;
+  brandN = 0;
+  location.href = S.role === 'prof' ? urlFor('test=' + mySlot()) : urlFor('prof=1');
+});
+// 테스트 학생 번호: 새로 받을 때마다 하나씩 올립니다. 이 탭에서 오가는 테스트 학생은 늘 같은 번호(같은 학생)입니다.
+const SS = { get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) {} } };
+const newSlot = () => { const n = (+(LS.get('pureun:slot') || 0) || 0) % 999 + 1; LS.set('pureun:slot', String(n)); return String(n); };
+const mySlot = () => SS.get('pureun:myslot') || (s => (SS.set('pureun:myslot', s), s))(newSlot());
+if (TEST) SS.set('pureun:myslot', TEST);
+// 교수 화면의 '학생으로 테스트': 새 탭마다 새 테스트 학생
+on('test-open', () => {
+  const n = newSlot();
+  const a = document.createElement('a'); a.href = urlFor('test=' + n); a.target = '_blank'; a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+});
 const shell = (inner, center) => `<div class="phone dark"><div class="body${center ? ' center' : ''}">${inner}</div></div>`;
 
 function viewProfLogin(msg = '') {
@@ -63,6 +99,7 @@ function viewProfLogin(msg = '') {
     ${msg ? `<div class="box no">${esc(msg)}</div>` : ''}
     <button class="btn am" style="flex:none" data-a="glogin">Google 계정으로 로그인</button>
     <a class="link" href="./">학생 화면으로</a>`, true);
+  LS.set(PROF_HERE, '1');   // 교수용 주소를 연 기기
 }
 on('glogin', async () => { try { await be.signInGoogle(); } catch (e) { toast('로그인하지 못했어요. 팝업 차단을 확인해 주세요.'); } });
 
@@ -76,16 +113,16 @@ function viewEntry(err = '') {
   const cs = S.classes;
   if (!cs.includes(entryCls)) entryCls = cs.length === 1 ? cs[0] : '';   // 반이 하나뿐이면 고를 필요 없음
   if (mustUseApp() || IN_APP_BROWSER) {
-    app.innerHTML = shell(`<div class="chip">푸른시험</div>${mustUseApp()
+    app.innerHTML = shell(`<div class="chip" data-a="brand">푸른시험</div>${mustUseApp()
       ? `<div class="h1">이 시험은 앱으로 봅니다</div><div class="txt">아래 버튼으로 앱을 내려받아 설치한 뒤, <b>앱에서</b> 반·학번·이름을 입력해 입장하세요.\n이 인터넷 창에서는 입장하지 마세요.</div><a class="btn am" style="flex:none;text-decoration:none" href="${APK_URL}">안드로이드 앱 내려받기</a>`
       : '<div class="h1">다른 창에서 열어 주세요</div><div class="txt">카카오톡·네이버 같은 앱 안의 창에서는 시험을 볼 수 없습니다.\n오른쪽 위 메뉴(⋮ 또는 공유)에서 <b>다른 브라우저로 열기</b>를 눌러 크롬이나 사파리로 열어 주세요.</div>'}`, true);
     return;
   }
-  app.innerHTML = shell(`<div class="chip">푸른시험</div>
+  app.innerHTML = shell(`${testRibbon()}<div class="chip" data-a="brand">푸른시험${TEST ? ` · 테스트 학생 ${TEST}` : ''}</div>
     <div class="h1">${cs.length > 1 ? '반을 고르고 학번과 이름을 입력하세요' : '학번과 이름을 입력하세요'}</div>
     ${cs.length > 1 ? `<div class="seg">${cs.map(c => `<button data-a="cls" data-c="${esc(c)}" class="${entryCls === c ? 'on' : ''}" aria-pressed="${entryCls === c}">${esc(c)}</button>`).join('')}</div>` : `<div class="sm" style="font-size:17px;font-weight:700">${esc(cs[0])}</div>`}
-    <input class="in" id="e-sid" inputmode="numeric" autocomplete="off" placeholder="학번 (예: 20261234)" maxlength="20">
-    <input class="in" id="e-name" autocomplete="off" placeholder="이름" maxlength="20">
+    <input class="in" id="e-sid" inputmode="numeric" autocomplete="off" placeholder="학번 (예: 20261234)" maxlength="20" value="${TEST ? 'TEST' + TEST : ''}">
+    <input class="in" id="e-name" autocomplete="off" placeholder="이름" maxlength="20" value="${TEST ? '테스트' + TEST : ''}">
     ${S.needCode ? '<input class="in" id="e-code" inputmode="numeric" autocomplete="off" placeholder="입장 코드 (교수님이 알려 줍니다)" maxlength="12">' : ''}
     ${err ? `<div class="box no">${esc(err)}</div>` : ''}
     <button class="btn am" style="flex:none" data-a="enter">입장</button>
@@ -140,7 +177,7 @@ function viewHome() {
     return `${exam ? `<button class="card" data-a="open-exam" data-id="${esc(id)}"><span class="st ${st[0]}">${st[1]}</span><h3>${esc(m.title || '시험')}</h3><div class="sm">${m.n || 0}문항 · ${m.minutes || 0}분 · ${hint}</div></button>` : ''}
       ${pracOpen(m) ? `<button class="card" data-a="open-practice" data-id="${esc(id)}"><span class="st">문제풀이</span><h3>${esc(m.title || '문제풀이')}</h3><div class="sm">${m.n || 0}문항 · 순서대로 풀고 해설을 바로 확인</div></button>` : ''}`;
   };
-  app.innerHTML = `<div class="phone"><div class="bar"><span>푸른시험</span><span class="who">${esc(who())}</span></div>
+  app.innerHTML = `<div class="phone"><div class="bar"><span data-a="brand">푸른시험${TEST ? ' · 테스트' : ''}</span><span class="who">${esc(who())}</span></div>
     <div class="body tint">${list.length ? list.map(card).join('') : '<div class="box info">지금 열려 있는 시험이 없어요. 교수님이 시험을 열면 여기에 나타납니다.</div>'}</div></div>`;
 }
 on('home', () => { stopExam(); viewHome(); });
@@ -233,6 +270,7 @@ async function startExam() {
     const first = { sess, dev: (APP ? 'app ' : 'web ') + navigator.userAgent.slice(0, 200) };
     const startedAt = mine.startedAt || be.now();
     if (!mine.startedAt) first.startedAt = startedAt;
+    if (!mine.who) first.who = { name: S.me.name, cls: S.me.cls };   // 입장이 취소돼도 결과에 이름이 남게
     await within(be.update(path, first));
     const [sheetRec, imgs] = await within(Promise.all([be.get('sheets/' + id), be.get('images/' + id)]), 25000);
     const sheet = C.fixSheet(parse(sheetRec, []));

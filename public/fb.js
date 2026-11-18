@@ -1,11 +1,14 @@
 // Firebase 연결 — 화면 코드(app.js)는 이 얇은 창구만 씁니다.
 const V = 'https://www.gstatic.com/firebasejs/12.12.1/';
 
-export async function createBackend(config) {
+// opts.name 을 주면 기본 로그인과 따로 노는 두 번째 로그인을 만듭니다(교수 기기에서 '학생으로 테스트').
+// opts.session 이면 로그인을 이 탭에만 기억합니다(탭마다 다른 테스트 학생).
+export async function createBackend(config, opts = {}) {
   const [{ initializeApp }, D, A] = await Promise.all([
     import(V + 'firebase-app.js'), import(V + 'firebase-database.js'), import(V + 'firebase-auth.js'),
   ]);
-  const app = initializeApp(config), db = D.getDatabase(app), auth = A.getAuth(app);
+  const app = opts.name ? initializeApp(config, opts.name) : initializeApp(config), db = D.getDatabase(app);
+  const auth = opts.session ? A.initializeAuth(app, { persistence: A.browserSessionPersistence }) : A.getAuth(app);
   const R = p => (p ? D.ref(db, p) : D.ref(db));
   let offset = 0, connected = false; const connCbs = new Set();
   D.onValue(R('.info/serverTimeOffset'), s => { offset = s.val() || 0; });

@@ -36,7 +36,7 @@ const QS = ['첫째 문제', '둘째 문제', '셋째 문제', '넷째 문제', 
 
 let step = '';
 // 어디선가 멈추면 끝없이 기다리지 않고 실패로 끝냅니다
-const watchdog = setTimeout(() => { console.error(`\n시간 초과 — 멈춘 단계: ${step}`); process.exit(1); }, 330000);
+const watchdog = setTimeout(() => { console.error(`\n시간 초과 — 멈춘 단계: ${step}`); process.exit(1); }, 420000);
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 412, height: 860 } });
 const errors = [];
@@ -44,6 +44,7 @@ const watch = (pg, name) => { pg.on('pageerror', e => errors.push(`${name}: ${e.
 const shot = async (pg, name) => { if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, name + '.png') }); };
 const db = pg => pg.evaluate(() => JSON.parse(localStorage.getItem('mockdb') || '{}'));
 const act = (pg, a, extra = '') => pg.click(`[data-a="${a}"]${extra}`);
+const key = (pg, k) => pg.keyboard.press(k);
 const say = s => { step = s; console.log('· ' + s); };
 const saved = pg => pg.waitForFunction(() => /저장됨/.test(document.getElementById('save').textContent), null, { timeout: 8000 });
 const qText = async pg => (await pg.textContent('.q')).trim();
@@ -186,6 +187,19 @@ try {
   await prof.waitForFunction(() => document.querySelectorAll('.qrow').length === 7);
   assert.deepEqual((await pages(prof, exId)).map(p => p.q), QS);
 
+  say('문항 편집 되돌리기 · 다시 하기 (Ctrl+Z · Ctrl+Y · 화면 버튼)');
+  await prof.click('.qrow[data-i="1"] [data-a="ed-rm"]');            // 둘째 문제 지우기
+  await prof.waitForFunction(() => document.querySelectorAll('#qlist .qrow').length === 4);
+  await prof.click('body', { position: { x: 5, y: 5 } }); await key(prof, 'Control+z');
+  await prof.waitForFunction(() => document.querySelectorAll('#qlist .qrow').length === 5);
+  assert.deepEqual((await pages(prof, exId)).map(p => p.q), QS, 'Ctrl+Z 로 지운 문항이 제자리에 돌아오지 않음');
+  await key(prof, 'Control+y');
+  await prof.waitForFunction(() => document.querySelectorAll('#qlist .qrow').length === 4);
+  await act(prof, 'h-undo');                                          // 화면 버튼(스마트폰용)
+  await prof.waitForFunction(() => document.querySelectorAll('#qlist .qrow').length === 5);
+  assert.deepEqual((await pages(prof, exId)).map(p => p.q), QS);
+  assert.ok(await prof.isDisabled('#h-undo') === false && await prof.isDisabled('#h-redo') === false);
+
   say('고른 문항만 교체');
   await prof.check('.ed-sel[data-i="2"]');
   await act(prof, 'ed-replace');
@@ -297,6 +311,13 @@ try {
   await enter(stu2, 'A반', '20261234', '홍길동');
   await stu2.waitForSelector('.box.no');
   assert.match(await stu2.textContent('.box.no'), /다른 기기/);
+
+  say('입장 취소: 학생 화면이 껐다 켜지 않아도 바로 입장 화면으로 돌아가고, 다시 들어올 수 있다');
+  await prof.click('#pmain tr:has-text("홍길동") [data-a="unbind"]'); await act(prof, 'dlg-yes');
+  await stu.waitForFunction(() => /입장이 취소되었습니다/.test(document.body.textContent) && document.getElementById('e-sid'), null, { timeout: 8000 });
+  await act(stu, 'cls', '[data-c="A반"]'); await stu.fill('#e-sid', '20261234'); await stu.fill('#e-name', '홍길동'); await act(stu, 'enter');
+  await stu.waitForSelector('[data-a="open-exam"]');
+  assert.match(await stu.textContent('.who'), /A반 20261234 홍길동/);
 
   say('안내 쪽: 시작 전에는 버튼이 꺼져 있다');
   await act(stu, 'open-exam');
@@ -492,6 +513,35 @@ try {
   const csv = await readFile(await dl.path(), 'utf8');
   assert.match(csv, /순위,반,학번,이름,총점/); assert.match(csv, /1,A반,20261234,홍길동,18,23,11,7,5,2,/); assert.match(csv, /미응시/);
 
+  say('입장 취소해도 결과에 이름이 남는다');
+  await act(prof, 'p-tab', '[data-t="run"]');
+  await prof.click('#pmain tr:has-text("김철수") [data-a="unbind"]'); await act(prof, 'dlg-yes');
+  await prof.waitForFunction(() => /입장 취소됨/.test([...document.querySelectorAll('#pmain tr')].find(r => /20261301/.test(r.textContent))?.textContent || ''));
+  assert.match(await prof.locator('#pmain tr', { hasText: '20261301' }).textContent(), /김철수/);
+  await act(prof, 'p-tab', '[data-t="result"]'); await act(prof, 'r-tab', '[data-t="rank"]');
+  assert.match(await prof.locator('#pmain tr', { hasText: '20261301' }).textContent(), /김철수/, '입장 취소한 학생의 이름이 결과에서 사라짐');
+
+  say('학생 지우기: 확인 창 → 휴지통, Ctrl+Z 로 되살리고 Ctrl+Y 로 다시 지움, 휴지통에서 되살리기');
+  await prof.click('#pmain tr:has-text("김철수") [data-a="stu-del"]');
+  assert.match(await prof.textContent('#modal'), /김철수 학생을 지울까요\?.*휴지통/s);
+  await act(prof, 'dlg-yes');
+  await prof.waitForFunction(() => !/김철수/.test(document.getElementById('pmain').textContent));
+  d = await db(prof);
+  assert.ok(!d.answers[exId]['20261301'], '지웠는데 답안이 남아 있음'); assert.ok(d.trash[exId]['20261301'].answers.submittedAt > 0, '휴지통에 답안이 없음');
+  await prof.click('body', { position: { x: 5, y: 5 } }); await key(prof, 'Control+z');
+  await prof.waitForFunction(() => /김철수/.test(document.getElementById('pmain').textContent));
+  d = await db(prof); assert.ok(d.answers[exId]['20261301'].submittedAt > 0); assert.ok(!(d.trash && d.trash[exId]), 'Ctrl+Z 뒤에도 휴지통에 남음');
+  await key(prof, 'Control+y');
+  await prof.waitForFunction(() => !/김철수/.test(document.getElementById('pmain').textContent));
+  await act(prof, 'r-tab', '[data-t="trash"]');
+  assert.match(await prof.textContent('#pmain'), /20261301.*김철수/s);
+  await shot(prof, 'p12-trash');
+  await act(prof, 'trash-back', '[data-sid="20261301"]');
+  await prof.waitForFunction(() => /휴지통이 비어 있습니다/.test(document.getElementById('pmain').textContent));
+  d = await db(prof); assert.ok(d.answers[exId]['20261301'].submittedAt > 0, '휴지통에서 되살리지 못함');
+  await act(prof, 'r-tab', '[data-t="rank"]');
+  assert.match(await prof.textContent('#pmain'), /김철수/);
+
   say('끝난 시험 다시 열기: 못 본 학생만 응시한다');
   await act(prof, 'p-tab', '[data-t="run"]');
   await act(prof, 'ex-settings'); await prof.click('#s-cam'); await act(prof, 's-save');   // 다시 여는 시험은 카메라 얼굴 확인을 켬
@@ -632,10 +682,55 @@ try {
   assert.ok(!(d.answers && d.answers[copyId]), '답안까지 복사됨');
   assert.ok(Object.keys(d.answers[exId]).length >= 2, '원래 시험의 답안이 사라짐');
 
+  say('학생으로 테스트: 새 탭에 테스트 학생이 따로 로그인하고, 교수 로그인은 그대로');
+  const [tp] = await Promise.all([ctx.waitForEvent('page'), act(prof, 'test-open')]);
+  watch(tp, '테스트 학생'); await tp.waitForSelector('#e-sid');
+  assert.match(await tp.textContent('.testband'), /테스트 학생/);
+  const tsid = await tp.inputValue('#e-sid'); assert.match(tsid, /^TEST\d+$/);
+  await act(tp, 'cls', '[data-c="A반"]'); await act(tp, 'enter');
+  await tp.waitForSelector('[data-a="open-exam"], .card, .box.info');
+  assert.match(await prof.textContent('#phead'), /재시험/, '테스트 탭을 연 뒤 교수 화면이 풀림');
+  await tp.close();
+
+  say('"푸른시험"(시험 이름)을 5번 누르면 교수 ↔ 테스트 학생 화면이 번갈아 바뀐다');
+  for (let i = 0; i < 5; i++) await prof.click('#phead h1[data-a="brand"]');
+  await prof.waitForSelector('#e-sid');
+  const mySid = await prof.inputValue('#e-sid');
+  await act(prof, 'cls', '[data-c="B반"]'); await act(prof, 'enter');
+  await prof.waitForSelector('.bar [data-a="brand"]');
+  for (let i = 0; i < 5; i++) await prof.click('.bar [data-a="brand"]');
+  await prof.waitForSelector('[data-a="new-exam"]');                 // 교수 화면 (로그인 유지)
+  for (let i = 0; i < 5; i++) await prof.click('header h1[data-a="brand"]');
+  await prof.waitForSelector('.bar [data-a="brand"]');               // 같은 테스트 학생으로 돌아옴(입장 화면이 아님)
+  assert.match(await prof.textContent('.who'), new RegExp(mySid));
+  for (let i = 0; i < 5; i++) await prof.click('.bar [data-a="brand"]');
+  await prof.waitForSelector('[data-a="new-exam"]');
+  const realStu = await ctx.newPage(); await realStu.goto(BASE + '/?mock=1');   // 교수님이 로그인한 적 없는 기기에서는 5번 눌러도 아무 일 없음
+  await realStu.evaluate(() => localStorage.removeItem('pureun:prof')); await realStu.reload(); await realStu.waitForSelector('#e-sid');
+  for (let i = 0; i < 5; i++) await realStu.click('[data-a="brand"]');
+  await realStu.waitForTimeout(500); assert.ok(await realStu.isVisible('#e-sid'), '학생 기기에서 5번 눌러 교수 화면으로 넘어감');
+  await realStu.close();
+  await prof.evaluate(() => localStorage.setItem('pureun:prof', '1'));
+
+  say('테스트 학생 정리 (되돌리기 가능), 실제 학생은 그대로');
+  await act(prof, 'people');
+  assert.ok(await prof.locator('#peopleBox .pill', { hasText: '테스트' }).count() >= 2);
+  await act(prof, 'test-clean'); await act(prof, 'dlg-yes');
+  await prof.waitForFunction(() => !/TEST/.test(document.getElementById('peopleBox')?.textContent || 'TEST'), null, { timeout: 5000 });
+  d = await db(prof);
+  assert.ok(!Object.values(d.users || {}).some(u => /^TEST/.test(u.sid)), '테스트 학생이 남음');
+  assert.ok(Object.values(d.users || {}).some(u => u.sid === '20261234'), '실제 학생까지 지워짐');
+  await act(prof, 'modal-close');
+  await prof.click('body', { position: { x: 5, y: 5 } }); await key(prof, 'Control+z');
+  await prof.waitForFunction(() => Object.values(JSON.parse(localStorage.getItem('mockdb')).users || {}).some(u => /^TEST/.test(u.sid)));
+  await key(prof, 'Control+y');
+  await prof.waitForFunction(() => !Object.values(JSON.parse(localStorage.getItem('mockdb')).users || {}).some(u => /^TEST/.test(u.sid)));
+
   assert.deepEqual(errors, [], '브라우저 오류');
   console.log('\n화면 테스트 통과');
 } catch (e) {
   console.error(`\n실패한 단계: ${step}\n`, e);
+  if (SHOTS) for (const [i, pg] of ctx.pages().entries()) await pg.screenshot({ path: path.join(SHOTS, `fail-${i}.png`) }).catch(() => {});
   if (errors.length) console.error('브라우저 오류:', errors);
   process.exitCode = 1;
 } finally {

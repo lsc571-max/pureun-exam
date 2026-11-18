@@ -264,6 +264,36 @@ test('풀이 시간은 자기 것만 쓰고, 잠긴 화면은 교수만 풀 수 
   await assertSucceeds(ans('u1', 'run').child('unlock').get());                 // 학생 화면이 풀림을 알 수 있음
 });
 
+test('이름·반은 시험을 시작할 때 답안에 한 번 적고, 입장 기록과 같아야 한다', async () => {
+  await enter('u1', A, '홍길동', 'A반');
+  await enter('u2', B, '김철수', 'B반');
+  await begin('u1', 'run');
+  await assertFails(ans('u1', 'run').child('who').set({ name: '김철수', cls: 'A반' }));            // 다른 이름
+  await assertFails(ans('u1', 'run').child('who').set({ name: '홍길동', cls: 'B반' }));            // 다른 반
+  await assertFails(ans('u1', 'run').child('who').set({ name: '홍길동', cls: 'A반', x: 1 }));      // 정해지지 않은 칸
+  await assertFails(ans('u2', 'run').child('who').set({ name: '김철수', cls: 'B반' }));            // 남의 답안 자리
+  await assertSucceeds(ans('u1', 'run').child('who').set({ name: '홍길동', cls: 'A반' }));
+  await assertFails(ans('u1', 'run').child('who').set({ name: '홍길동', cls: 'A반' }));            // 한 번만
+  await assertFails(ans('u1', 'run').child('who').remove());
+  await assertSucceeds(prof().ref().update({ [`bind/${A}`]: null, 'users/u1': null }));            // 입장 취소
+  await assertSucceeds(prof().ref(`answers/run/${A}/who`).get());                                  // 이름은 그대로 남음
+});
+
+test('휴지통: 교수만 쓰고 읽으며, 지운 학생을 예전 시각 그대로 되살릴 수 있다', async () => {
+  await enter('u1', A, '홍길동', 'A반');
+  await begin('u1', 'run');
+  await ans('u1', 'run').child('ev').push({ t: 'leave', at: Date.now() });
+  const old = (await prof().ref(`answers/run/${A}`).get()).val();
+  old.startedAt = Date.now() - 5 * 3600000; old.submittedAt = Date.now() - 4 * 3600000;           // 몇 시간 전 기록
+  for (const e of Object.values(old.ev)) e.at = Date.now() - 4.5 * 3600000;
+  await assertSucceeds(prof().ref().update({ [`answers/run/${A}`]: null, [`trash/run/${A}`]: { answers: old, at: Date.now() } }));
+  await assertFails(stu('u1').ref('trash').get());
+  await assertFails(stu('u1').ref(`trash/run/${A}`).get());
+  await assertFails(stu('u1').ref(`trash/run/${A}`).set({ x: 1 }));
+  await assertSucceeds(prof().ref().update({ [`answers/run/${A}`]: old, [`trash/run/${A}`]: null })); // 되살리기
+  await assertFails(ans('u1', 'run').child('startedAt').set(Date.now() - 5 * 3600000));          // 학생은 예전 시각을 못 씀
+});
+
 test('장문형 점수: 공개 뒤 자기 것만 읽고, 학생은 못 쓴다', async () => {
   await enter('u1', A, '홍길동', 'A반');
   await enter('u2', B, '김철수', 'B반');
