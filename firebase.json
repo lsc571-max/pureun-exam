@@ -1,0 +1,12 @@
+{
+  "database": { "rules": "database.rules.json" },
+  "hosting": {
+    "site": "pureun-exam",
+    "public": "public",
+    "ignore": ["**/.*", "mock.js"],
+    "headers": [
+      { "source": "**/*.@(html|js|webmanifest)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+    ]
+  },
+  "emulators": { "database": { "port": 9000 }, "ui": { "enabled": false } }
+}
