@@ -84,7 +84,7 @@ test('명단을 올리지 않으면 반·학번·이름만 입력해 입장한�
   await assertFails(enter('u1', '12', '홍길동', 'A'));            // 학번이 너무 짧음
   await assertFails(enter('u1', '2026/1234', '홍길동', 'A'));     // 학번에 쓸 수 없는 글자
   await assertFails(enter('u1', '20261234', '', 'A'));            // 이름 없음
-  await assertFails(enter('u1', '20261234', '홍길동', '가'));      // 반이 A·B 같은 글자가 아님
+  await assertFails(enter('u1', '20261234', '홍길동', ''));        // 반 없음
   await assertFails(stu('u1').ref('bind/20261234').set('u1'));    // 이름 없이 묶기만
   await assertSucceeds(enter('u1', '20261234', '홍길동', 'A'));
   await assertFails(enter('u2', '20261234', '홍길동', 'A'));      // 같은 학번으로 두 번째 기기
@@ -93,6 +93,19 @@ test('명단을 올리지 않으면 반·학번·이름만 입력해 입장한�
   await assertSucceeds(stu('u1').ref('answers/run/20261234/a/q1').set(1));
   await assertFails(stu('u2').ref('answers/run/20261234/a/q1').set(1));
   await assertSucceeds(prof().ref('users').get());                // 교수는 입장한 학생 목록을 본다
+});
+
+test('반: 교수가 정한 반 이름으로만 입장한다', async () => {
+  await env.withSecurityRulesDisabled(ctx => ctx.database().ref().update({ roster: null, 'classes/1학년 A반': 0, 'classes/C반': 1 }));
+  await assertSucceeds(stu('u1').ref('classes').get());
+  await assertFails(stu('u1').ref('classes/D반').set(2));                 // 학생은 반을 못 만든다
+  await assertFails(enter('u1', '20261234', '홍길동', 'A'));              // 없는 반
+  await assertFails(enter('u1', '20261234', '홍길동', 'B반'));
+  await assertSucceeds(enter('u1', '20261234', '홍길동', '1학년 A반'));
+  await assertSucceeds(enter('u2', '20261235', '김철수', 'C반'));
+  await assertSucceeds(prof().ref('classes').set({ '기계과': 0 }));       // 한 반으로 줄이기
+  await assertFails(enter('u3', '20261236', '이영희', 'C반'));
+  await assertSucceeds(enter('u3', '20261236', '이영희', '기계과'));
 });
 
 test('두 기기 금지: 이미 묶인 학번으로 다른 기기는 못 들어온다', async () => {

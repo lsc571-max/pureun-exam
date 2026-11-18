@@ -17,22 +17,23 @@ const Q = new URLSearchParams(location.search);
 const MOCK = Q.has('mock') && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const WANT_PROF = Q.has('prof');
 const app = $('app');
-const who = () => (S.me ? `${S.me.cls}반 ${S.me.sid} ${S.me.name}` : '');
+const who = () => (S.me ? `${S.me.cls} ${S.me.sid} ${S.me.name}` : '');
 const LS = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
 
 // 인터넷이 끊기면 서버 요청이 끝없이 기다리므로, 정해진 시간 뒤에는 실패로 봅니다.
 const within = (p, ms = 8000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('network timeout')), ms))]);
 
 /* ================= 시작 · 로그인 ================= */
-let unsubExams = null, profMod = null;
+let unsubExams = null, unsubCls = null, profMod = null;
 async function boot() {
   try { setBackend(await (MOCK ? import('./mock.js') : import('./fb.js')).then(m => m.createBackend(CONFIG))); }
   catch (e) { $('bootmsg').textContent = '서버에 연결하지 못했어요. 인터넷 연결을 확인하고 다시 열어 주세요.'; return; }
   be.onAuth(async u => {
-    stopExam(); if (unsubExams) { unsubExams(); unsubExams = null; }
+    stopExam(); if (unsubExams) { unsubExams(); unsubExams = null; } if (unsubCls) { unsubCls(); unsubCls = null; }
     S.user = u; S.role = ''; S.me = null;
     try {
       if (!u) { if (WANT_PROF) return viewProfLogin(); await be.signInAnon(); return; }
+      unsubCls = be.on('classes', v => { S.classes = C.classList(v); if ($('e-sid')) keepEntry(); if (profMod && S.role === 'prof') profMod.onClasses(); });
       if (u.anon) {
         if (WANT_PROF) return viewProfLogin();
         S.role = 'student';
@@ -65,9 +66,11 @@ on('glogin', async () => { try { await be.signInGoogle(); } catch (e) { toast('�
 /* ================= 학생: 입장 ================= */
 let entryCls = '';
 function viewEntry(err = '') {
+  const cs = S.classes;
+  if (!cs.includes(entryCls)) entryCls = cs.length === 1 ? cs[0] : '';   // 반이 하나뿐이면 고를 필요 없음
   app.innerHTML = shell(`<div class="chip">푸른시험</div>
-    <div class="h1">반을 고르고 학번과 이름을 입력하세요</div>
-    <div class="seg"><button data-a="cls" data-c="A" class="${entryCls === 'A' ? 'on' : ''}">A반</button><button data-a="cls" data-c="B" class="${entryCls === 'B' ? 'on' : ''}">B반</button></div>
+    <div class="h1">${cs.length > 1 ? '반을 고르고 학번과 이름을 입력하세요' : '학번과 이름을 입력하세요'}</div>
+    ${cs.length > 1 ? `<div class="seg">${cs.map(c => `<button data-a="cls" data-c="${esc(c)}" class="${entryCls === c ? 'on' : ''}" aria-pressed="${entryCls === c}">${esc(c)}</button>`).join('')}</div>` : `<div class="sm" style="font-size:17px;font-weight:700">${esc(cs[0])}</div>`}
     <input class="in" id="e-sid" inputmode="numeric" autocomplete="off" placeholder="학번 (예: 20261234)" maxlength="20">
     <input class="in" id="e-name" autocomplete="off" placeholder="이름" maxlength="20">
     ${err ? `<div class="box no">${esc(err)}</div>` : ''}
@@ -75,11 +78,13 @@ function viewEntry(err = '') {
     <div class="sm">학번과 이름을 정확히 입력하세요. 처음 입장한 이 기기에서만 응시할 수 있습니다.</div>
     <div style="margin-top:auto;text-align:center"><a class="link" href="./?prof=1">교수용</a></div>`, true);
 }
-on('cls', el => { entryCls = el.dataset.c; const sid = $('e-sid').value, nm = $('e-name').value; viewEntry(); $('e-sid').value = sid; $('e-name').value = nm; });
+// 입력하던 글자를 지우지 않고 화면만 다시 그립니다
+function keepEntry(err = '') { const sid = $('e-sid') ? $('e-sid').value : '', nm = $('e-name') ? $('e-name').value : ''; viewEntry(err); $('e-sid').value = sid; $('e-name').value = nm; }
+on('cls', el => { entryCls = el.dataset.c; keepEntry(); });
 on('enter', async () => {
   const sid = C.normSid($('e-sid').value), name = C.normName($('e-name').value), cls = entryCls;
   const again = m => { viewEntry(m); $('e-sid').value = sid; $('e-name').value = name; };
-  if (!cls) return again('A반인지 B반인지 먼저 골라 주세요.');
+  if (!cls) return again('반을 먼저 골라 주세요.');
   if (!C.validSid(sid)) return again('학번을 정확히 입력해 주세요.');
   if (!name) return again('이름을 입력해 주세요.');
   try {

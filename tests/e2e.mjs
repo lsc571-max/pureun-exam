@@ -55,7 +55,7 @@ try {
   const free = await ctx.newPage(); watch(free, '명단 없는 학생');
   await free.goto(BASE + '/?mock=1'); await free.waitForSelector('#e-sid');
   await act(free, 'enter'); await free.waitForSelector('.box.no');                       // 반을 안 고름
-  await act(free, 'cls', '[data-c="B"]'); await free.fill('#e-sid', '20269999'); await free.fill('#e-name', '자유입장'); await act(free, 'enter');
+  await act(free, 'cls', '[data-c="B반"]'); await free.fill('#e-sid', '20269999'); await free.fill('#e-name', '자유입장'); await act(free, 'enter');
   await free.waitForFunction(() => /B반 20269999 자유입장/.test(document.body.textContent));
   await prof.waitForFunction(() => /학생 \(1명\)/.test(document.querySelector('[data-a="roster"]').textContent));
   await free.close();
@@ -65,6 +65,15 @@ try {
   await prof.fill('#r-text', '반\t학번\t이름\nA\t20261234\t홍길동\nB\t20261301\t김철수\nB\t20261302\t이영희');
   await act(prof, 'r-add');
   await prof.waitForFunction(() => document.querySelectorAll('#rosterBox tr').length === 5);
+  say('반 추가: 학생 입장 화면에 바로 나타난다');
+  await prof.fill('#c-new', ' 1학년  C반 '); await act(prof, 'c-add');
+  await prof.waitForFunction(() => /1학년 C반/.test(document.getElementById('clsBox').textContent));
+  const peek = await ctx.newPage(); await peek.goto(BASE + '/?mock=1'); await peek.waitForSelector('#e-sid');
+  assert.deepEqual(await peek.locator('.seg button').allTextContents(), ['A반', 'B반', '1학년 C반']);
+  await peek.fill('#e-sid', '2026'); await prof.click('[data-a="c-del"][data-c="1학년 C반"]');
+  await peek.waitForFunction(() => document.querySelectorAll('.seg button').length === 2);
+  assert.equal(await peek.inputValue('#e-sid'), '2026', '반 목록이 바뀔 때 입력하던 학번이 지워짐');
+  await peek.close();
   await shot(prof, 'p1-roster');
   await act(prof, 'modal-close');
 
@@ -105,6 +114,19 @@ try {
   await prof.waitForFunction(() => document.getElementById('modal').hidden);
   d = await db(prof); assert.ok(d.keys[exId].data.includes('비밀해설3-수정'));
 
+  say('문제 만들기 부탁문: 유형·난이도별 문항 수를 골라서 만든다');
+  await act(prof, 'cp', '[data-k="make"]');
+  await prof.fill('#po-subject', '기계공작법');
+  await prof.selectOption('.po[data-k="nChoice"]', '10'); await prof.selectOption('.po[data-k="nEssay"]', '3');
+  await prof.selectOption('.po[data-k="hi"]', '2'); await prof.selectOption('.po[data-k="mid"]', '7'); await prof.selectOption('.po[data-k="lo"]', '3');
+  assert.ok(await prof.isDisabled('[data-a="po-copy"]'), '난이도 합이 안 맞는데 복사가 됨');   // 2+7+3=12, 문항은 13
+  await prof.selectOption('.po[data-k="lo"]', '4');
+  assert.match(await prof.textContent('#po-sum'), /모두 13문항 · 합계 70점/);
+  await act(prof, 'po-copy');
+  const made = await prof.textContent('pre.code');
+  assert.match(made, /기계공작법/); assert.match(made, /사지선다 10문항, 서술형 3문항/); assert.match(made, /상 2문항 · 중 7문항 · 하 4문항/);
+  await act(prof, 'modal-close');
+
   say('부탁문 복사 버튼');
   await act(prof, 'cp', '[data-k="review"]');
   assert.match(await prof.textContent('pre.code'), /\/\* 2번 \*\/.*"a":2/s);
@@ -121,19 +143,19 @@ try {
   await stu.waitForSelector('#e-sid');
   await shot(stu, 's1-entry');
   say('명단과 다르면 입장 불가');
-  await act(stu, 'cls', '[data-c="A"]'); await stu.fill('#e-sid', '20261234'); await stu.fill('#e-name', '홍길순'); await act(stu, 'enter');
+  await act(stu, 'cls', '[data-c="A반"]'); await stu.fill('#e-sid', '20261234'); await stu.fill('#e-name', '홍길순'); await act(stu, 'enter');
   await stu.waitForSelector('.box.no');
-  await act(stu, 'cls', '[data-c="B"]'); await stu.fill('#e-name', '홍길동'); await act(stu, 'enter');   // 반이 다름
+  await act(stu, 'cls', '[data-c="B반"]'); await stu.fill('#e-name', '홍길동'); await act(stu, 'enter');   // 반이 다름
   await stu.waitForSelector('.box.no');
   say('맞으면 입장');
-  await act(stu, 'cls', '[data-c="A"]'); await stu.fill('#e-sid', ' 2026 1234 '); await stu.fill('#e-name', '홍 길동'); await act(stu, 'enter');
+  await act(stu, 'cls', '[data-c="A반"]'); await stu.fill('#e-sid', ' 2026 1234 '); await stu.fill('#e-name', '홍 길동'); await act(stu, 'enter');
   await stu.waitForSelector('[data-a="open-exam"]');
   assert.match(await stu.textContent('.who'), /A반 20261234 홍길동/);
 
   say('두 번째 기기는 같은 학번으로 못 들어온다');
   const stu2 = await ctx.newPage(); watch(stu2, '학생2');
   await stu2.goto(BASE + '/?mock=1'); await stu2.waitForSelector('#e-sid');
-  await act(stu2, 'cls', '[data-c="A"]'); await stu2.fill('#e-sid', '20261234'); await stu2.fill('#e-name', '홍길동'); await act(stu2, 'enter');
+  await act(stu2, 'cls', '[data-c="A반"]'); await stu2.fill('#e-sid', '20261234'); await stu2.fill('#e-name', '홍길동'); await act(stu2, 'enter');
   await stu2.waitForSelector('.box.no');
   assert.match(await stu2.textContent('.box.no'), /다른 기기/);
 
@@ -230,7 +252,7 @@ try {
   d = await db(prof); assert.ok(d.answers[exId]['20261234'].submittedAt > 0);
 
   say('시간이 끝나면 자동으로 제출된다');
-  await act(stu2, 'cls', '[data-c="B"]'); await stu2.fill('#e-sid', '20261301'); await stu2.fill('#e-name', '김철수'); await act(stu2, 'enter');
+  await act(stu2, 'cls', '[data-c="B반"]'); await stu2.fill('#e-sid', '20261301'); await stu2.fill('#e-name', '김철수'); await act(stu2, 'enter');
   await stu2.waitForSelector('[data-a="open-exam"]'); await act(stu2, 'open-exam');
   await stu2.waitForSelector('[data-a="agree"]'); await act(stu2, 'agree'); await act(stu2, 'start');
   await stu2.waitForSelector('#clock');
@@ -264,7 +286,7 @@ try {
   await act(prof, 'p-tab', '[data-t="result"]');
   await prof.waitForFunction(() => /홍길동/.test(document.getElementById('pmain').textContent));
   const rankRow = await prof.textContent('#pmain table tr:nth-child(2)');
-  assert.match(rankRow.replace(/\s+/g, ' '), /1\s*A\s*20261234\s*홍길동\s*15\s*8\s*7/, '순위표: ' + rankRow);   // 4+4+0 + 서술 7
+  assert.match(rankRow.replace(/\s+/g, ' '), /1\s*A반\s*20261234\s*홍길동\s*15\s*8\s*7/, '순위표: ' + rankRow);   // 4+4+0 + 서술 7
   assert.equal(await prof.locator('.pill.no', { hasText: '미응시' }).count(), 2);
   await shot(prof, 'p5-result');
   await act(prof, 'r-tab', '[data-t="q"]'); assert.match(await prof.textContent('#pmain'), /\d+%/);
@@ -273,7 +295,7 @@ try {
   await act(prof, 'r-tab', '[data-t="leave"]'); assert.match(await prof.textContent('#pmain'), /홍길동/);
   const [dl] = await Promise.all([prof.waitForEvent('download'), act(prof, 'csv')]);
   const csv = await readFile(await dl.path(), 'utf8');
-  assert.match(csv, /순위,반,학번,이름,총점/); assert.match(csv, /1,A,20261234,홍길동,15,20,8,7,4,2,/); assert.match(csv, /미응시/);
+  assert.match(csv, /순위,반,학번,이름,총점/); assert.match(csv, /1,A반,20261234,홍길동,15,20,8,7,4,2,/); assert.match(csv, /미응시/);
 
   say('결과 공개 → 학생이 점수와 해설을 본다');
   await act(prof, 'ex-release'); await act(prof, 'dlg-yes');

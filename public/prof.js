@@ -21,6 +21,7 @@ export function start() {
   ];
   P = null; viewList();
 }
+export function onClasses() { if ($('clsBox')) paintClasses(); if (P && (P.tab === 'run' || P.tab === 'result')) renderTab(); }
 export function onExams() { if (!P) viewList(); else if (!S.exams[P.id]) { closeExam(); viewList(); } else { paintHead(); live(); } }
 // 학생들이 답을 저장할 때마다 화면을 다시 그리되, 너무 잦지 않게 모아서 그립니다.
 function live() {
@@ -57,25 +58,44 @@ on('new-exam', async () => {
 on('roster', () => {
   modal(`<h2>학생</h2>
     <div class="box info">${Object.keys(roster).length ? '<b>명단 확인 켜짐</b> — 명단의 반·학번·이름과 똑같이 입력한 학생만 입장합니다.' : '<b>명단 없이 입장</b> — 학생이 반·학번·이름을 직접 입력하고 들어옵니다. 아래에 명단을 넣으면 명단에 있는 학생만 입장하게 바뀝니다(선택).'}</div>
+    <div class="panel" style="padding:12px"><h2>반</h2><div class="sm">학생이 입장할 때 고르는 반입니다. 이름은 자유롭게 정할 수 있고(예: 1학년 A반, C반), 하나만 두면 학생은 반을 고르지 않습니다.</div>
+      <div id="clsBox"></div>
+      <div class="row"><input class="in" id="c-new" placeholder="새 반 이름" maxlength="20" style="flex:1;min-width:140px;font-size:16px;padding:9px 11px"><button class="btn s" data-a="c-add">반 추가</button></div></div>
     <div class="sm">명단을 쓰려면 엑셀에서 <b>반 · 학번 · 이름</b> 칸을 복사해 붙여 넣으세요. 칸 순서는 상관없고 한 줄에 한 명입니다.</div>
     <textarea class="in" id="r-text" rows="5" placeholder="A	20261234	홍길동&#10;B	20261301	김철수" style="font-size:15px"></textarea>
     <div class="row"><button class="btn s" data-a="r-add">명단에 추가</button><button class="btn s gh" data-a="r-replace">전체 바꾸기</button></div>
     <div id="r-msg"></div><div id="rosterBox"></div>
     <button class="btn gh" data-a="modal-close">닫기</button>`, { wide: true });
-  paintRoster();
+  paintRoster(); paintClasses();
+});
+function paintClasses() {
+  const box = $('clsBox'); if (!box) return;
+  box.innerHTML = `<div class="row" style="margin:8px 0">${S.classes.map(c => `<span class="pill" style="font-size:15px;padding:4px 6px 4px 12px">${esc(c)} <button class="mini red" data-a="c-del" data-c="${esc(c)}" aria-label="${esc(c)} 삭제" ${S.classes.length > 1 ? '' : 'disabled'}>✕</button></span>`).join('')}</div>`;
+}
+const saveClasses = list => be.set('classes', Object.fromEntries(list.map((c, i) => [c, i])));
+on('c-add', async () => {
+  const c = C.normCls($('c-new').value);
+  if (!C.validCls(c)) return toast('반 이름은 1~20자로, . # $ / [ ] 없이 써 주세요.');
+  if (S.classes.includes(c)) return toast('이미 있는 반이에요.');
+  await saveClasses([...S.classes, c]); $('c-new').value = '';
+});
+on('c-del', async el => {
+  const c = el.dataset.c, n = students().filter(s => s.cls === c).length;
+  if (n) return toast(`${c}에 학생이 ${n}명 있어요. 반을 지우려면 그 학생들을 먼저 정리해 주세요.`, 4000);
+  await saveClasses(S.classes.filter(x => x !== c));
 });
 function paintRoster() {
   const box = $('rosterBox'); if (!box) return;
   const st = students(), cnt = c => st.filter(s => s.cls === c).length;
   if (!st.length) { box.innerHTML = '<div class="sm">아직 입장한 학생이 없어요.</div>'; return; }
-  box.innerHTML = `<div class="sm" style="margin-bottom:6px">전체 ${st.length}명 (A반 ${cnt('A')} · B반 ${cnt('B')}) · 입장한 기기 ${st.filter(s => bind[s.sid]).length}대</div>
+  box.innerHTML = `<div class="sm" style="margin-bottom:6px">전체 ${st.length}명 (${[...new Set([...S.classes, ...st.map(x => x.cls)])].map(c => `${esc(c)} ${cnt(c)}`).join(' · ')}) · 입장한 기기 ${st.filter(s => bind[s.sid]).length}대</div>
     <div class="tw" style="max-height:40dvh;overflow:auto"><table><tr><th>반</th><th>학번</th><th>이름</th><th>기기</th><th></th></tr>
     ${st.map(s => `<tr><td>${esc(s.cls)}</td><td>${esc(s.sid)}</td><td>${esc(s.name)}</td><td>${bind[s.sid] ? '<span class="pill ok">입장함</span>' : '<span class="pill">미입장</span>'}</td>
       <td style="white-space:nowrap">${bind[s.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(s.sid)}">기기 풀기</button> ` : ''}${roster[s.sid] ? `<button class="mini red" data-a="r-del" data-sid="${esc(s.sid)}">명단에서 삭제</button>` : ''}</td></tr>`).join('')}
     </table></div>`;
 }
 async function rosterApply(replace) {
-  const { rows, errors } = C.parseRoster($('r-text').value);
+  const { rows, errors } = C.parseRoster($('r-text').value, S.classes);
   const bad = rows.filter(r => !C.validSid(r.sid));
   if (!rows.length || bad.length) { $('r-msg').innerHTML = `<div class="box no">${esc(bad.length ? `학번에 쓸 수 없는 글자가 있어요: ${bad[0].sid}` : errors.length ? errors.map(e => e.msg).join('\n') : '붙여 넣은 내용이 없어요.')}</div>`; return; }
   if (replace && !(await confirmBox('명단 전체를 바꿀까요?', `지금 명단 ${Object.keys(roster).length}명을 지우고 ${rows.length}명으로 바꿉니다.`, '바꾸기', { danger: true }))) return;
@@ -126,7 +146,7 @@ function paintClock() {
   el.textContent = m.status === 'running' ? C.fmtClock(m.endAt - be.now()) : '--:--';
 }
 const exam = () => C.splitExam(P.pages);
-const clsFilter = () => `<div class="tabs">${[['', '전체'], ['A', 'A반'], ['B', 'B반']].map(([c, n]) => `<button data-a="p-cls" data-c="${c}" class="${P.cls === c ? 'on' : ''}">${n}</button>`).join('')}</div>`;
+const clsFilter = () => `<div class="tabs">${[['', '전체'], ...[...new Set([...S.classes, ...students().map(x => x.cls)])].filter(Boolean).map(c => [c, c])].map(([c, n]) => `<button data-a="p-cls" data-c="${esc(c)}" class="${P.cls === c ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>`;
 on('p-cls', el => { P.cls = el.dataset.c; renderTab(); });
 
 /* ================= 진행 ================= */
@@ -139,11 +159,11 @@ function tabRun() {
   const k = { all: rows.length, inb: rows.filter(r => bind[r.sid]).length, go: rows.filter(r => r.a && r.a.startedAt && !r.a.submittedAt).length, sub: rows.filter(r => r.a && r.a.submittedAt).length, lv: rows.filter(r => r.lv.count).length };
   const btns = {
     draft: `<button class="btn s am" data-a="ex-status" data-s="open">학생에게 열기 (대기실)</button>`,
-    open: `<button class="btn s am" data-a="ex-start">시험 시작 (A·B반 함께)</button><button class="btn s gh" data-a="ex-status" data-s="draft">대기실 닫기</button>`,
-    running: `<button class="btn s gh" data-a="ex-extend">시간 5분 연장</button><button class="btn s red" data-a="ex-end">시험 종료 (A·B반 함께)</button>`,
+    open: `<button class="btn s am" data-a="ex-start">시험 시작 (모든 반 함께)</button><button class="btn s gh" data-a="ex-status" data-s="draft">대기실 닫기</button>`,
+    running: `<button class="btn s gh" data-a="ex-extend">시간 5분 연장</button><button class="btn s red" data-a="ex-end">시험 종료 (모든 반 함께)</button>`,
     ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (10분 추가)</button>'}`,
   }[m.status || 'draft'];
-  const guide = { draft: '문항과 명단을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 두 반이 동시에 시작합니다.', running: `${hhmmss(m.startAt)} 시작 · ${hhmmss(m.endAt)} 종료 예정. 시간이 되면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 서술형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
+  const guide = { draft: '문항과 명단을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 모든 반이 동시에 시작합니다.', running: `${hhmmss(m.startAt)} 시작 · ${hhmmss(m.endAt)} 종료 예정. 시간이 되면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 서술형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
   $('pmain').innerHTML = `
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="pill" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
       <div class="sm">${esc(guide)}</div>
@@ -170,7 +190,7 @@ on('ex-status', async el => {
 on('ex-start', async () => {
   const m = meta(), v = C.validateBundle(P.pages);
   if (v.errors.length) return toast('문항에 고칠 곳이 있어요.');
-  if (!(await confirmBox('시험을 시작할까요?', `A·B반이 함께 시작합니다. <b>${m.minutes}분</b> 뒤 자동으로 끝납니다.`, '시작'))) return;
+  if (!(await confirmBox('시험을 시작할까요?', `모든 반이 함께 시작합니다. <b>${m.minutes}분</b> 뒤 자동으로 끝납니다.`, '시작'))) return;
   const now = be.now(); await setMeta({ status: 'running', startAt: now, endAt: now + m.minutes * 60000 });
 });
 on('ex-extend', async () => { await setMeta({ endAt: meta().endAt + 5 * 60000 }); toast('5분 연장했어요.'); });
@@ -195,7 +215,7 @@ on('unsubmit', async el => { if (await confirmBox('제출을 취소할까요?', 
 on('lv-show', el => {
   const sid = el.dataset.sid, r = people()[sid] || {}, lv = C.leaveSummary((P.answers[sid] || {}).ev);
   const name = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림' };
-  modal(`<h2>${esc(r.cls || '')}반 ${esc(sid)} ${esc(r.name || '')} — 이탈 ${lv.count}회</h2>
+  modal(`<h2>${esc(r.cls || '')} ${esc(sid)} ${esc(r.name || '')} — 이탈 ${lv.count}회</h2>
     <div class="tw"><table><tr><th>시각</th><th>내용</th></tr>${lv.list.map(e => `<tr><td>${hhmmss(e.at)}</td><td>${esc(name[e.t] || e.t)}</td></tr>`).join('')}</table></div>
     <button class="btn gh" data-a="modal-close">닫기</button>`);
 });
@@ -251,7 +271,7 @@ function tabEdit() {
     ${m.status === 'running' ? '<div class="box warn"><b>시험이 진행 중입니다.</b> 지금 문항을 고치면 이미 푼 학생과 달라질 수 있어요.</div>' : ''}
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${s.n}문항 · ${s.total}점</h2><span class="sm">사지선다 ${s.choice} · 서술형 ${s.essay} · 난이도 상 ${s.byLevel['상']} 중 ${s.byLevel['중']} 하 ${s.byLevel['하']}</span></div>
       <div class="row"><button class="btn s" data-a="ed-paste">문항 묶음 붙여 넣기</button><button class="btn s gh" data-a="ed-replace">고른 문항만 교체 붙여 넣기</button><button class="btn s gh" data-a="ed-add">빈 문항 추가</button><button class="btn s gh" data-a="ed-del">고른 문항 삭제</button></div>
-      <div class="row"><button class="btn s gh" data-a="cp" data-k="make">① 문제 만들기 부탁문 복사</button><button class="btn s gh" data-a="cp" data-k="review">② 정확성 검토 부탁문 복사</button><button class="btn s gh" data-a="cp" data-k="final">③ 최종 확인 부탁문 복사</button><button class="btn s gh" data-a="cp-opts">부탁문 설정</button></div>
+      <div class="row"><button class="btn s gh" data-a="cp" data-k="make">① 문제 만들기 부탁문 복사</button><button class="btn s gh" data-a="cp" data-k="review">② 정확성 검토 부탁문 복사</button><button class="btn s gh" data-a="cp" data-k="final">③ 최종 확인 부탁문 복사</button></div>
       ${v.errors.length ? `<div class="box no"><b>고칠 곳 ${v.errors.length}군데</b> — 빨간 문항을 확인하세요. 고치기 전에는 시험을 열 수 없습니다.${v.errors.filter(e => e.i < 0).map(e => '\n' + esc(e.msg)).join('')}</div>` : s.n ? '<div class="box ok">문항 검사를 통과했습니다.</div>' : ''}
     </div>
     ${P.pages.map((p, i) => {
@@ -375,30 +395,50 @@ on('f-save', async () => {
 });
 
 /* ----- 복사 버튼 3개 ----- */
-const PO_KEY = 'promptopts';
-const promptOpts = () => ({ subject: '', nChoice: 20, nEssay: 2, nImage: 0, nVideo: 0, hi: 20, mid: 50, lo: 30, ptsChoice: 4, ptsEssay: 10, total: 100, ...(LS.get(PO_KEY) || {}) });
-on('cp', async el => {
-  const o = promptOpts(), k = el.dataset.k;
-  if (k !== 'make' && !P.pages.some(C.isQuestion)) return toast('먼저 문항을 넣어 주세요.');
-  const text = k === 'make' ? C.promptMake(o) : k === 'review' ? C.promptReview(P.pages, o) : C.promptFinal(P.pages, o);
-  const ok = await copyText(text);
+const PO_KEY = 'promptopts2';
+const promptOpts = () => ({ subject: '', nChoice: 20, nEssay: 2, nImage: 0, nVideo: 0, hi: 5, mid: 11, lo: 6, ptsChoice: 4, ptsEssay: 10, ...(LS.get(PO_KEY) || {}) });
+function showPrompt(k, text, ok) {
   modal(`<h2>${ok ? '복사했어요' : '아래 글을 복사하세요'}</h2><div class="sm">${k === 'make' ? '강의 자료 파일과 함께 AI에게 붙여 넣으세요.' : k === 'review' ? '문제를 만든 AI가 아닌 다른 AI에게 강의 자료와 함께 붙여 넣으세요.' : 'ChatGPT에 붙여 넣으세요. 앞선 검토 의견이 있으면 표시된 자리에 넣습니다.'}</div>
     <pre class="code">${esc(text)}</pre><button class="btn" data-a="modal-close">닫기</button>`, { wide: true });
+}
+on('cp', async el => {
+  const o = promptOpts(), k = el.dataset.k;
+  if (k === 'make') return makeForm();
+  if (!P.pages.some(C.isQuestion)) return toast('먼저 문항을 넣어 주세요.');
+  const text = k === 'review' ? C.promptReview(P.pages, o) : C.promptFinal(P.pages, o);
+  showPrompt(k, text, await copyText(text));
 });
-on('cp-opts', () => {
-  const o = promptOpts(), f = (k, label, w = 90) => `<label class="f" style="width:${w}px">${label}<input class="in po" data-k="${k}" type="number" min="0" value="${esc(o[k])}"></label>`;
-  modal(`<h2>부탁문 설정</h2><div class="sm">복사되는 부탁문의 빈칸에 들어갈 값입니다. 이 컴퓨터에 기억됩니다.</div>
+// ① 문제 만들기: 유형별 문항 수 · 난이도별 문항 수 · 배점을 골라서 부탁문을 만듭니다
+function makeForm() {
+  const o = promptOpts();
+  const sel = (k, label, max, min = 0) => `<label class="f" style="flex:1;min-width:104px">${label}<select class="in po" data-k="${k}">${Array.from({ length: max - min + 1 }, (_, i) => i + min).map(v => `<option ${+o[k] === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`;
+  modal(`<h2>문제 만들기 부탁문</h2><div class="sm">고른 값이 부탁문에 들어갑니다. 이 컴퓨터에 기억됩니다.</div>
     <label class="f">과목 이름<input class="in" id="po-subject" value="${esc(o.subject)}" placeholder="예: 기계공작법" maxlength="40"></label>
-    <div class="row">${f('nChoice', '사지선다 수')}${f('nEssay', '서술형 수')}${f('nImage', '그림 문제 수')}${f('nVideo', '영상 문제 수')}</div>
-    <div class="row">${f('hi', '상 %')}${f('mid', '중 %')}${f('lo', '하 %')}</div>
-    <div class="row">${f('ptsChoice', '사지선다 배점', 110)}${f('ptsEssay', '서술형 배점', 110)}${f('total', '합계', 90)}</div>
-    <div class="row"><button class="btn gh" data-a="modal-close">취소</button><button class="btn" data-a="po-save">저장</button></div>`);
-});
-on('po-save', () => {
+    <div class="sm" style="font-weight:700;color:var(--navy)">유형별 문항 수</div>
+    <div class="row">${sel('nChoice', '객관식(사지선다)', 60)}${sel('nEssay', '주관식(서술형)', 20)}${sel('nImage', '그림 문제', 20)}${sel('nVideo', '영상 문제', 20)}</div>
+    <div class="sm" style="font-weight:700;color:var(--navy)">난이도별 문항 수</div>
+    <div class="row">${sel('hi', '상', 60)}${sel('mid', '중', 60)}${sel('lo', '하', 60)}</div>
+    <div class="sm" style="font-weight:700;color:var(--navy)">배점</div>
+    <div class="row">${sel('ptsChoice', '객관식·그림·영상 한 문항', 20, 1)}${sel('ptsEssay', '주관식 한 문항', 30, 1)}</div>
+    <div id="po-sum"></div>
+    <div class="row"><button class="btn gh" data-a="modal-close">취소</button><button class="btn am" data-a="po-copy">부탁문 복사</button></div>`, { wide: true });
+  const paint = () => {
+    const v = readMake(), t = C.promptTotals(v), ok = t.count > 0 && t.count === t.levels;
+    $('po-sum').innerHTML = `<div class="box ${ok ? 'ok' : 'warn'}"><b>모두 ${t.count}문항 · 합계 ${t.total || 0}점</b>${ok ? '' : t.count ? `\n난이도별 문항 수의 합(${t.levels})이 전체 문항 수(${t.count})와 같아야 합니다.` : '\n문항 수를 골라 주세요.'}</div>`;
+    document.querySelector('[data-a=po-copy]').disabled = !ok;
+  };
+  document.querySelectorAll('.po').forEach(x => x.addEventListener('change', paint));
+  paint();
+}
+function readMake() {
   const o = { subject: $('po-subject').value.trim() };
   document.querySelectorAll('.po').forEach(i => { o[i.dataset.k] = +i.value || 0; });
-  if (o.hi + o.mid + o.lo !== 100) return toast('난이도 비율의 합이 100이 되게 해 주세요.');
-  LS.set(PO_KEY, o); closeModal(); toast('저장했어요.');
+  return o;
+}
+on('po-copy', async () => {
+  const o = readMake(); LS.set(PO_KEY, o);
+  const text = C.promptMake(o);
+  showPrompt('make', text, await copyText(text));
 });
 
 /* ================= 서술형 채점 ================= */
@@ -418,7 +458,7 @@ function tabGrade() {
       <div class="row"><span class="sm" style="margin-right:auto" id="g-prog">배점 ${q.pts}점 · 채점 ${done} / ${list.length}명</span><button class="mini" data-a="g-blind">${P.blind ? '이름 보이기' : '이름 가리기'}</button><button class="mini" data-a="g-refresh">새 답안 불러오기</button></div></div>
     ${list.map((s, i) => {
       const r = people()[s.sid] || {}, g = (P.essay[s.sid] || {})[q.id];
-      return `<div class="panel" data-sid="${esc(s.sid)}"><div class="sm">${P.blind ? `답안 ${i + 1}` : `${esc(r.cls || '')}반 ${esc(s.sid)} ${esc(r.name || '')}`}</div><div class="txt">${esc(s.text)}</div>
+      return `<div class="panel" data-sid="${esc(s.sid)}"><div class="sm">${P.blind ? `답안 ${i + 1}` : `${esc(r.cls || '')} ${esc(s.sid)} ${esc(r.name || '')}`}</div><div class="txt">${esc(s.text)}</div>
         ${step ? `<div class="scores">${step.map(v => `<button data-a="g-set" data-sid="${esc(s.sid)}" data-v="${v}" class="${g === v ? 'on' : ''}">${v}</button>`).join('')}</div>`
         : `<div class="row"><input class="in g-num" type="number" min="0" max="${q.pts}" step="0.5" value="${typeof g === 'number' ? g : ''}" data-sid="${esc(s.sid)}" style="width:120px;font-size:16px;padding:8px"><span class="sm">/ ${q.pts}점 — 입력하고 칸 밖을 누르면 저장</span></div>`}</div>`;
     }).join('') || '<div class="panel"><div class="sm">아직 이 문항에 답한 학생이 없어요.</div></div>'}`;
@@ -468,7 +508,7 @@ function tabResult() {
 on('r-tab', el => { P.rtab = el.dataset.t; tabResult(); });
 on('csv', () => {
   const { sheet, rows } = resultRows(), m = meta();
-  const took = C.ranked(rows.filter(r => r.took)), absent = rows.filter(r => !r.took).sort((a, b) => a.cls.localeCompare(b.cls) || a.sid.localeCompare(b.sid));
+  const took = C.ranked(rows.filter(r => r.took)), absent = rows.filter(r => !r.took).sort((a, b) => String(a.cls).localeCompare(String(b.cls)) || a.sid.localeCompare(b.sid));
   const head = ['순위', '반', '학번', '이름', '총점', '만점', '사지선다', '서술형', '답한 문항', '이탈 횟수', '이탈 시각', '시작', '제출', ...sheet.map((q, i) => `${i + 1}번(${q.pts}점)`)];
   const line = r => [r.rank || '', r.cls, r.sid, r.name, r.took ? r.total : '미응시', r.max, r.took ? r.mc : '', r.took ? r.essay : '', r.took ? r.answered : '', r.lv.count || '', r.lv.list.filter(e => e.t !== 'back').map(e => hhmmss(e.at)).join(' '), r.took ? hhmmss(r.a.startedAt) : '', r.took && r.a.submittedAt ? hhmmss(r.a.submittedAt) : '', ...sheet.map(q => (r.took ? (r.per[q.id].graded === false ? '채점 전' : r.per[q.id].pts) : ''))];
   download(`${(m.title || '시험').replace(/[\\/:*?"<>|]/g, '_')}_결과.csv`, C.toCSV([head, ...took.map(line), ...absent.map(line)]));

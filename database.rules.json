@@ -49,7 +49,7 @@
       ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.child('sid').isString() && newData.child('name').isString() && newData.child('cls').isString() && newData.child('sid').val().matches(/^[A-Z0-9-]{4,20}$/) && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 20 && newData.child('cls').val().matches(/^[A-Z]$/) && (!root.child('roster').exists() || (root.child('roster').child(newData.child('sid').val()).child('name').val() === newData.child('name').val() && root.child('roster').child(newData.child('sid').val()).child('cls').val() === newData.child('cls').val())) && newData.parent().parent().child('bind').child(newData.child('sid').val()).val() === auth.uid",
+        ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.child('sid').isString() && newData.child('name').isString() && newData.child('cls').isString() && newData.child('sid').val().matches(/^[A-Z0-9-]{4,20}$/) && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 20 && newData.child('cls').val().length >= 1 && newData.child('cls').val().length <= 20 && (!root.child('classes').exists() || root.child('classes').child(newData.child('cls').val()).exists()) && (!root.child('roster').exists() || (root.child('roster').child(newData.child('sid').val()).child('name').val() === newData.child('name').val() && root.child('roster').child(newData.child('sid').val()).child('cls').val() === newData.child('cls').val())) && newData.parent().parent().child('bind').child(newData.child('sid').val()).val() === auth.uid",
         "$other": {
           ".validate": "$other === 'sid' || $other === 'name' || $other === 'cls' || $other === 'at'"
         }
@@ -98,6 +98,10 @@
           ".read": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('released').val() === true"
         }
       }
+    },
+    "classes": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
     }
   }
 }

@@ -231,25 +231,37 @@ export function leaveSummary(ev) {
 /* ---------- 명단 ---------- */
 export const normSid = s => String(s == null ? '' : s).replace(/\s+/g, '').toUpperCase();
 export const normName = s => String(s == null ? '' : s).replace(/\s+/g, '');
-export const normCls = s => { const m = String(s == null ? '' : s).trim().toUpperCase().match(/^([A-Z])\s*반?$/); return m ? m[1] : ''; };
+// 반 이름은 교수가 정합니다 (예: "A반", "1학년 A반", "C반"). 정하지 않으면 A반·B반.
+export const DEFAULT_CLASSES = ['A반', 'B반'];
+export const normCls = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+export const validCls = s => s.length >= 1 && s.length <= 20 && !/[.#$\[\]\/]/.test(s);
+// 서버에 저장된 { 반이름: 순서 } 를 순서대로 늘어놓습니다.
+export const classList = v => { const a = Object.entries(v || {}).sort((x, y) => (x[1] || 0) - (y[1] || 0)).map(x => x[0]); return a.length ? a : DEFAULT_CLASSES.slice(); };
+const squash = s => String(s).replace(/\s+/g, '').toUpperCase();
 export const validSid = s => /^[A-Z0-9-]{4,20}$/.test(s);
 
-// 엑셀에서 복사한 줄(탭·쉼표·공백 구분). 칸 순서는 상관없이 반(A/B) · 학번(숫자) · 이름을 알아봅니다.
-export function parseRoster(text, defaultCls = '') {
+// 엑셀에서 복사한 줄(탭·쉼표·공백 구분). 칸 순서는 상관없이 반 · 학번(숫자) · 이름을 알아봅니다.
+// 반은 정해 둔 이름과 맞춰 봅니다. "A"처럼 줄여 써도 "A반"으로 알아보고, 반이 하나뿐이면 안 써도 됩니다.
+export function parseRoster(text, classes = DEFAULT_CLASSES) {
   const rows = [], errors = [], seen = new Set();
-  String(text || '').split(/\r?\n/).forEach((line, li) => {
-    const cells = line.split(/[\t,;]+|\s{1,}/).map(c => c.trim()).filter(Boolean);
-    if (!cells.length) return;
-    let cls = '', sid = '', name = [];
+  const byLen = classes.slice().sort((a, b) => b.length - a.length);
+  const flex = c => new RegExp('(^|[\\s,;])' + c.trim().split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*') + '(?=$|[\\s,;])', 'i');
+  String(text || '').split(/\r?\n/).forEach((raw, li) => {
+    let line = raw.replace(/\t/g, ' , '), cls = '';
+    if (!line.trim()) return;
+    for (const c of byLen) { const re = flex(c); if (re.test(line)) { cls = c; line = line.replace(re, '$1'); break; } }
+    const cells = line.split(/[\s,;]+/).map(c => c.trim()).filter(Boolean);
+    let sid = ''; const name = [];
     for (const c of cells) {
-      if (!cls && normCls(c)) cls = normCls(c);
+      const short = !cls && classes.find(k => squash(k) === squash(c) + '반');
+      if (short) cls = short;
       else if (!sid && /^\d[\dA-Za-z-]{3,19}$/.test(c)) sid = normSid(c);
       else name.push(c);
     }
+    if (!sid && /학번|이름|성명/.test(raw)) return; // 머리글 줄
     const nm = normName(name.join(''));
-    if (!sid && !cls && /학번|이름|성명/.test(line)) return; // 머리글 줄
-    cls = cls || defaultCls;
-    if (!sid || !nm || !cls) { errors.push({ line: li + 1, msg: `${li + 1}번째 줄을 읽지 못했어요: "${line.trim()}"` }); return; }
+    if (!cls && classes.length === 1) cls = classes[0];
+    if (!sid || !nm || !cls) { errors.push({ line: li + 1, msg: `${li + 1}번째 줄을 읽지 못했어요${sid && nm && !cls ? ' (반 이름이 정해 둔 반과 다릅니다)' : ''}: "${raw.trim()}"` }); return; }
     if (seen.has(sid)) { errors.push({ line: li + 1, msg: `학번 ${sid} 이(가) 두 번 나와요.` }); return; }
     seen.add(sid);
     rows.push({ sid, name: nm, cls });
@@ -296,6 +308,12 @@ export const FORMAT_EXAMPLE = `[
 - image · video 쪽은 opts 가 있으면 사지선다, 없으면 서술형(model 필요)으로 채점합니다.`;
 
 const b = v => (v === 0 || v) ? String(v) : ' ';
+// 부탁문에 넣을 문항 수와 배점 합계 (고른 값에서 자동 계산)
+export function promptTotals(o = {}) {
+  const n = k => Number(o[k]) || 0;
+  const pick = n('nChoice') + n('nImage') + n('nVideo'), count = pick + n('nEssay');
+  return { count, levels: n('hi') + n('mid') + n('lo'), total: count ? pick * n('ptsChoice') + n('nEssay') * n('ptsEssay') : '' };
+}
 export function promptMake(o = {}) {
   return `[역할]
 당신은 대학 ${o.subject || '[과목명]'} 과목의 시험 출제 위원입니다.
@@ -307,8 +325,8 @@ export function promptMake(o = {}) {
 
 [출제 조건]
 - 사지선다 ${b(o.nChoice)}문항, 서술형 ${b(o.nEssay)}문항, 그림 문제 ${b(o.nImage)}문항, 영상 문제 ${b(o.nVideo)}문항
-- 난이도 비율 — 상 ${b(o.hi)}% · 중 ${b(o.mid)}% · 하 ${b(o.lo)}%
-- 배점 — 사지선다 ${b(o.ptsChoice)}점, 서술형 ${b(o.ptsEssay)}점, 합계 ${b(o.total)}점
+- 난이도 — 상 ${b(o.hi)}문항 · 중 ${b(o.mid)}문항 · 하 ${b(o.lo)}문항 (level 값으로 표시)
+- 배점 — 사지선다·그림·영상 문제 ${b(o.ptsChoice)}점, 서술형 ${b(o.ptsEssay)}점, 합계 ${b(promptTotals(o).total)}점
 - 사지선다는 정답이 하나뿐이어야 하고, 오답 보기는 그럴듯하지만 분명히 틀려야 합니다.
 - "모두 맞다", "모두 틀리다", "①과 ②" 같은 보기는 쓰지 않습니다. 보기 순서가 학생마다 섞이기 때문입니다.
 - 정답 위치(a)가 한 번호에 몰리지 않게 합니다.

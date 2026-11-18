@@ -157,18 +157,31 @@ test('명단: 엑셀 붙여 넣기 (칸 순서 무관, 머리글·빈 줄 무시
   const r = C.parseRoster('반\t학번\t이름\nA\t20261234\t홍길동\n20261235, 김 철수, B반\n\nb 20261236 이영희\n');
   assert.deepEqual(r.errors, []);
   assert.deepEqual(r.rows, [
-    { sid: '20261234', name: '홍길동', cls: 'A' },
-    { sid: '20261235', name: '김철수', cls: 'B' },
-    { sid: '20261236', name: '이영희', cls: 'B' },
+    { sid: '20261234', name: '홍길동', cls: 'A반' },
+    { sid: '20261235', name: '김철수', cls: 'B반' },
+    { sid: '20261236', name: '이영희', cls: 'B반' },
   ]);
-  const bad = C.parseRoster('A 20261234 홍길동\nA 20261234 홍길순\n홍길동만\n');
-  assert.equal(bad.rows.length, 1); assert.equal(bad.errors.length, 2);
-  assert.equal(C.parseRoster('20261234 홍길동', 'A').rows[0].cls, 'A');
+  const bad = C.parseRoster('A 20261234 홍길동\nA 20261234 홍길순\n홍길동만\nC반 20261240 박민수\n');
+  assert.equal(bad.rows.length, 1); assert.equal(bad.errors.length, 3);
+  assert.match(bad.errors[2].msg, /반 이름/);
 });
 
-test('학번·이름 다듬기', () => {
+test('명단: 교수가 정한 반 이름 (띄어쓰기 있는 이름, 반이 하나뿐일 때)', () => {
+  const cls = ['1학년 A반', '2학년 B반', 'C반'];
+  const r = C.parseRoster('1학년 A반\t20261234\t홍길동\n20261235 김철수 2학년B반\nc, 20261236, 이영희\n2학년 b반 20261237 최지우', cls);
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.rows.map(x => x.cls), ['1학년 A반', '2학년 B반', 'C반', '2학년 B반']);
+  assert.deepEqual(r.rows.map(x => x.name), ['홍길동', '김철수', '이영희', '최지우']);
+  assert.equal(C.parseRoster('20261234 홍길동', ['기계과']).rows[0].cls, '기계과', '반이 하나면 안 써도 됨');
+  assert.equal(C.parseRoster('20261234 홍길동', cls).errors.length, 1, '반이 여럿이면 써야 함');
+});
+
+test('반 이름 · 학번 · 이름 다듬기', () => {
   assert.equal(C.normSid(' 2026 1234 '), '20261234'); assert.equal(C.normName(' 홍 길동 '), '홍길동');
-  assert.equal(C.normCls('a반'), 'A'); assert.equal(C.normCls('가'), '');
+  assert.equal(C.normCls('  1학년   A반 '), '1학년 A반');
+  assert.ok(C.validCls('1학년 A반')); assert.ok(!C.validCls('')); assert.ok(!C.validCls('a/b')); assert.ok(!C.validCls('가'.repeat(21)));
+  assert.deepEqual(C.classList(null), ['A반', 'B반']);
+  assert.deepEqual(C.classList({ 'C반': 2, '1학년 A반': 0, 'B반': 1 }), ['1학년 A반', 'B반', 'C반']);
   assert.ok(C.validSid('20261234')); assert.ok(!C.validSid('12')); assert.ok(!C.validSid('a/b.c'));
 });
 
@@ -193,6 +206,10 @@ test('영상 주소 · 시계 · CSV', () => {
 test('부탁문: 형식 예시가 들어가고, 사진 자료와 고유번호는 빠진다', () => {
   assert.ok(C.promptMake({ subject: '기계공작법', nChoice: 20 }).includes('사지선다 20문항'));
   assert.ok(C.promptMake().includes('"t":"choice"'));
+  const o = { subject: '기계공작법', nChoice: 20, nEssay: 2, nImage: 2, nVideo: 1, hi: 5, mid: 12, lo: 8, ptsChoice: 4, ptsEssay: 4 };
+  assert.deepEqual(C.promptTotals(o), { count: 25, levels: 25, total: 100 });
+  assert.ok(C.promptMake(o).includes('난이도 — 상 5문항 · 중 12문항 · 하 8문항'));
+  assert.ok(C.promptMake(o).includes('합계 100점'));
   const p = C.promptReview([{ ...PAGES[1], img: 'data:image/jpeg;base64,AAAA' }], { subject: '기계공작법' });
   assert.ok(p.includes('/* 1번 */')); assert.ok(p.includes('"a":1')); assert.ok(!p.includes('base64')); assert.ok(!p.includes(PAGES[1].id));
   assert.ok(C.promptFinal(PAGES).includes('출제 가능'));
