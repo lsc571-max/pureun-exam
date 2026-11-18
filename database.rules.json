@@ -116,6 +116,15 @@
           },
           "until": {
             ".validate": "newData.isNumber()"
+          },
+          "tm": {
+            "$q": {
+              ".write": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('status').val() === 'running' && now < root.child('exams').child($exam).child('endAt').val() + 20000 && ((root.child('answers').child($exam).child($sid).child('until').exists() && now < root.child('answers').child($exam).child($sid).child('until').val() + 20000) || (!root.child('answers').child($exam).child($sid).child('until').exists() && (!root.child('answers').child($exam).child($sid).child('startedAt').exists() || !root.child('exams').child($exam).child('minutes').exists() || now < root.child('answers').child($exam).child($sid).child('startedAt').val() + root.child('exams').child($exam).child('minutes').val() * 60000 + (root.child('exams').child($exam).child('extra').exists() ? root.child('exams').child($exam).child('extra').val() : 0) + 20000))) && !root.child('answers').child($exam).child($sid).child('submittedAt').exists()",
+              ".validate": "$q.matches(/^[A-Za-z0-9_-]{1,24}$/) && newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000"
+            }
+          },
+          "unlock": {
+            ".validate": "newData.isNumber()"
           }
         }
       }

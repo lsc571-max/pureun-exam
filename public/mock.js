@@ -35,7 +35,7 @@ export async function createBackend() {
     if (ks[0] === 'answers') {
       const ex = at(db, 'exams/' + ks[1]) || {}, mine = at(db, 'bind/' + ks[2]) === user.uid;
       const me = at(db, `answers/${ks[1]}/${ks[2]}`) || {}, own = me.until || (me.startedAt && ex.minutes ? me.startedAt + ex.minutes * 60000 + (ex.extra || 0) : Infinity);
-      if (!mine || ex.status !== 'running' || Date.now() >= ex.endAt + 20000 || Date.now() >= own + 20000 || (ks[3] === 'until') || at(db, `answers/${ks[1]}/${ks[2]}/submittedAt`) != null) throw deny();
+      if (!mine || ex.status !== 'running' || Date.now() >= ex.endAt + 20000 || Date.now() >= own + 20000 || (ks[3] === 'until' || ks[3] === 'unlock') || at(db, `answers/${ks[1]}/${ks[2]}/submittedAt`) != null) throw deny();
       return;
     }
     throw deny();

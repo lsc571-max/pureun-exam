@@ -12,6 +12,10 @@ const pill = m => { const s = ST[m.status] || ST.draft; return `<span class="pil
 const meta = () => S.exams[P.id] || {};
 // 안내 쪽과 마무리 쪽은 앱이 자동으로 만듭니다. 문항 목록에는 문제만 둡니다.
 const questionsOnly = pages => pages.filter(p => p.t !== 'intro' && p.t !== 'end');
+const isLeave = e => e.t === 'leave' || e.t === 'unpin' || e.t === 'nopin';
+// 잠겨 있어 교수의 확인이 필요한 학생인가
+const isLocked = a => !!a && !a.submittedAt && C.leaveSummary(a.ev).locks > (a.unlock || 0);
+const totalTime = a => Object.values((a && a.tm) || {}).reduce((x, y) => x + (Number(y) || 0), 0);
 const LATE = 30;   // 늦게 시작해도 되는 시간(분)의 기본값
 // 학생별 마감 시각: 따로 준 시각이 있으면 그 시각, 없으면 시작한 때 + 시험 시간(+연장). 전체 마감은 넘지 않음
 const dlOf = (m, a) => (!a || !a.startedAt ? 0 : Math.min(m.endAt || 0, a.until || (a.startedAt + (m.minutes || 0) * 60000 + (m.extra || 0))));
@@ -170,14 +174,14 @@ function liveCounts() {
   const { sheet, key } = exam(), rows = Object.entries(P.answers).filter(([, a]) => a && a.startedAt);
   const tot = rows.map(([sid, a]) => C.scoreStudent(sheet, key, a.a, P.essay[sid]).total);
   return { go: rows.filter(([, a]) => !a.submittedAt).length, sub: rows.filter(([, a]) => a.submittedAt).length,
-    lv: rows.filter(([, a]) => C.leaveSummary(a.ev).count).length, avg: tot.length ? tot.reduce((x, y) => x + y, 0) / tot.length : 0, max: sheet.reduce((n, q) => n + q.pts, 0) };
+    lv: rows.filter(([, a]) => C.leaveSummary(a.ev).count).length, locked: rows.filter(([, a]) => isLocked(a)).length, avg: tot.length ? tot.reduce((x, y) => x + y, 0) / tot.length : 0, max: sheet.reduce((n, q) => n + q.pts, 0) };
 }
 function paintBand() {
   const el = $('pband'); if (!el || !P) return; const m = meta();
   if (m.status !== 'running') { el.hidden = true; return; }
   const c = liveCounts(), left = m.endAt - be.now();
   el.hidden = false;
-  el.innerHTML = `<b>시험 중</b><span>전체 마감까지 ${left > 0 ? C.fmtClock(left) : '종료하는 중…'}</span><span>응시 중 ${c.go}명</span><span>제출 ${c.sub}명</span><span>이탈 ${c.lv}명</span><span>평균 ${c.avg.toFixed(1)} / ${c.max}점 <small>(자동 채점 기준)</small></span>${P.tab === 'run' ? '' : '<span class="go">진행 탭으로 →</span>'}`;
+  el.innerHTML = `<b>시험 중</b><span>전체 마감까지 ${left > 0 ? C.fmtClock(left) : '종료하는 중…'}</span><span>응시 중 ${c.go}명</span><span>제출 ${c.sub}명</span><span>이탈 ${c.lv}명</span>${c.locked ? `<span class="alarm">잠긴 학생 ${c.locked}명 — 확인 필요</span>` : ''}<span>평균 ${c.avg.toFixed(1)} / ${c.max}점 <small>(자동 채점 기준)</small></span>${P.tab === 'run' ? '' : '<span class="go">진행 탭으로 →</span>'}`;
 }
 const exam = () => C.splitExam(P.pages);
 const clsFilter = () => `<div class="tabs">${[['', '전체'], ...allClasses().map(c => [c, c])].map(([c, n]) => `<button data-a="p-cls" data-c="${esc(c)}" class="${P.cls === c ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>`;
@@ -205,7 +209,8 @@ function questionCharts(stats) {
     if (s.choice) rows = s.picks.map((n, j) => hbar((s.good.includes(j) ? '✓ ' : '') + (P.sheetOpts[s.id] || [])[j], n, s.n, s.good.includes(j) ? 'good' : (j === s.topWrong ? 'bad' : ''))).join('') + (s.blank ? hbar('안 풂', s.blank, s.n) : '');
     else if (s.k === 'short') rows = s.tally.slice(0, 8).map(t => hbar((t.ok ? '✓ ' : '') + t.text, t.n, s.n, t.ok ? 'good' : 'bad')).join('') + (s.tally.length > 8 ? `<div class="sm">그 밖의 답 ${s.tally.length - 8}종류</div>` : '') + (s.blank ? hbar('안 씀', s.blank, s.n) : '');
     else rows = `<div class="sm">교수 채점 문항 — 채점 ${s.graded} / ${s.n - s.blank}명, 평균 ${s.avg.toFixed(1)} / ${s.pts}점</div>`;
-    return `<div class="qchart"><h4>${s.no}. ${esc(s.q.length > 60 ? s.q.slice(0, 60) + '…' : s.q)} <span class="pill ${s.k === 'long' ? '' : s.rate < .4 ? 'no' : s.rate < .7 ? 'mid' : 'ok'}">${s.k === 'long' ? C.KIND_NAME.long : `정답률 ${Math.round(s.rate * 100)}%`}</span><span class="pill">${C.KIND_NAME[s.k]} · 난이도 ${esc(s.level || '')}</span></h4>${rows}</div>`;
+    const tms = Object.values(P.answers).map(a => a && a.tm && Number(a.tm[s.id])).filter(v => v > 0), avgT = tms.length ? tms.reduce((x, y) => x + y, 0) / tms.length : 0;
+    return `<div class="qchart"><h4>${s.no}. ${esc(s.q.length > 60 ? s.q.slice(0, 60) + '…' : s.q)} <span class="pill ${s.k === 'long' ? '' : s.rate < .4 ? 'no' : s.rate < .7 ? 'mid' : 'ok'}">${s.k === 'long' ? C.KIND_NAME.long : `정답률 ${Math.round(s.rate * 100)}%`}</span><span class="pill">${C.KIND_NAME[s.k]} · 난이도 ${esc(s.level || '')}</span>${avgT ? `<span class="pill">평균 풀이 ${C.fmtDur(avgT)}</span>` : ''}</h4>${rows}</div>`;
   }).join('');
 }
 
@@ -237,12 +242,14 @@ function tabRun() {
       <div class="panel"><h2>지금까지의 점수 분포</h2>${histChart(scores, sheet.reduce((n, q) => n + q.pts, 0))}<div class="sm">자동 채점 기준이며 학생에게는 보이지 않습니다.</div></div>
     </div>
     <div class="panel"><div class="row"><h2 style="margin-right:auto">학생별 현황</h2>${clsFilter()}</div>
-      <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>상태</th><th class="num">남은 시간</th><th class="num">답한 문항</th><th class="num">이탈</th><th></th></tr>
+      <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>상태</th><th class="num">남은 시간</th><th class="num">답한 문항</th><th class="num">이탈</th>${m.cam ? '<th class="num">카메라 경고</th><th class="num">잠금</th>' : ''}<th></th></tr>
       ${rows.map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td>
         <td>${r.a && r.a.submittedAt ? `<span class="pill ok">제출 ${hhmmss(r.a.submittedAt)}</span>` : r.a && r.a.startedAt ? '<span class="pill blue">응시 중</span>' : '<span class="pill mid">입장</span>'}${r.a && r.a.dev ? ` <span class="pill">${r.a.dev.startsWith('app') ? '앱' : '웹'}</span>` : ''}</td>
         <td class="num" ${r.a && r.a.startedAt && !r.a.submittedAt ? `data-dl="${dlOf(m, r.a)}"` : ''}></td>
         <td class="num">${r.a ? `${r.cnt} / ${sheet.length}` : ''}</td>
         <td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td>
+        ${m.cam ? `<td class="num">${r.lv.face ? `<button class="mini" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.face}회</button>` : ''}${r.lv.camOff ? ' <span class="pill mid">카메라 꺼짐</span>' : ''}</td>
+        <td class="num">${r.lv.locks ? `${r.lv.locks}회` : ''}${isLocked(r.a) ? ` <button class="mini red" data-a="unlock" data-sid="${esc(r.sid)}">잠금 해제</button>` : ''}</td>` : ''}
         <td style="white-space:nowrap;text-align:right">${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">입장 취소</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button>` : ''}</td></tr>`).join('')}
       </table></div>${rows.length ? '' : '<div class="sm">아직 입장한 학생이 없어요. 학생이 반·학번·이름을 입력하고 들어오면 여기에 나타납니다.</div>'}</div>`;
 }
@@ -312,10 +319,16 @@ on('ex-release', async () => {
   await setMeta({ released: !m.released });
 });
 on('unsubmit', async el => { if (await confirmBox('제출을 취소할까요?', '학생이 남은 시간 동안 다시 풀 수 있게 됩니다.', '취소하기')) await be.remove(`answers/${P.id}/${el.dataset.sid}/submittedAt`); });
+// 카메라 경고 2회로 잠긴 학생의 화면을 풀어 줍니다 (교실에서 확인한 뒤 누르세요)
+on('unlock', async el => {
+  const sid = el.dataset.sid, a = P.answers[sid]; if (!a) return;
+  await be.set(`answers/${P.id}/${sid}/unlock`, C.leaveSummary(a.ev).locks);
+  toast('잠금을 풀었어요.');
+});
 on('lv-show', el => {
   const sid = el.dataset.sid, r = people()[sid] || {}, lv = C.leaveSummary((P.answers[sid] || {}).ev);
-  const name = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함' };
-  modal(`<h2>${esc(r.cls || '')} ${esc(sid)} ${esc(r.name || '')} — 이탈 ${lv.count}회</h2>
+  const name = C.EV_NAME;
+  modal(`<h2>${esc(r.cls || '')} ${esc(sid)} ${esc(r.name || '')} — 이탈 ${lv.count}회 · 카메라 경고 ${lv.face}회 · 잠금 ${lv.locks}회</h2>
     <div class="tw"><table><tr><th>시각</th><th>내용</th></tr>${lv.list.map(e => `<tr><td>${hhmmss(e.at)}</td><td>${esc(name[e.t] || e.t)}</td></tr>`).join('')}</table></div>
     <button class="btn gh" data-a="modal-close">닫기</button>`);
 });
@@ -329,6 +342,9 @@ on('ex-settings', () => {
     <label class="f">마무리 쪽에 보일 말 (선택)<textarea class="in" id="s-end" rows="2" maxlength="500" placeholder="예: 결과는 다음 주 수업 시간에 공개합니다.">${esc((m.end || {}).body || '')}</textarea></label>
     <button class="check ${m.practice ? 'on' : ''}" data-a="s-practice" id="s-prac"><i>✓</i>문제풀이(학습) 모드로 공개</button>
     <div class="sm">켜면 입장한 학생이 이 문항을 순서대로 풀며 정답과 해설을 바로 봅니다. 실제 시험 문항에는 켜지 마세요.</div>
+    <button class="check ${m.cam ? 'on' : ''}" data-a="s-practice" id="s-cam"><i>✓</i>전면 카메라로 얼굴 확인</button>
+    <div class="sm">켜면 시험 중 얼굴이 화면에서 3초 넘게 사라지거나 고개가 30도 넘게 돌아가면 화면을 가리고 경고를 기록합니다. 경고 2회면 화면이 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 영상은 저장하지 않습니다. 기기가 뜨거워지거나 배터리가 아래 값보다 적으면 카메라를 저절로 끕니다.</div>
+    <label class="f">카메라를 끄는 배터리 잔량(%)<input class="in" id="s-batt" type="number" min="0" max="100" value="${m.camBatt >= 0 ? m.camBatt : 20}"></label>
     <button class="check ${m.appOnly ? 'on' : ''}" data-a="s-practice" id="s-app"><i>✓</i>안드로이드는 앱으로만 응시</button>
     <div class="sm">켜면 안드로이드 휴대폰의 인터넷 창(크롬 등)으로는 시작할 수 없고, 앱 내려받기 안내가 나옵니다. 아이폰은 그대로 웹으로 봅니다.</div>
     <button class="btn" data-a="s-save">저장</button>
@@ -339,13 +355,13 @@ on('ex-settings', () => {
 });
 on('s-practice', el => el.classList.toggle('on'));
 on('s-save', async () => {
-  const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), practice = $('s-prac').classList.contains('on'), appOnly = $('s-app').classList.contains('on');
+  const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), practice = $('s-prac').classList.contains('on'), appOnly = $('s-app').classList.contains('on'), cam = $('s-cam').classList.contains('on'), camBatt = Math.max(0, Math.min(100, Math.round(+$('s-batt').value || 0)));
   const late = Math.round(+$('s-late').value);
   const noticeBody = $('s-notice').value.trim(), endBody = $('s-end').value.trim();   // 확인 창이 뜨면 이 칸들이 사라지므로 미리 읽어 둡니다
   if (!title || !(minutes >= 1 && minutes <= 300) || !(late >= 0 && late <= 300)) return toast('이름과 시간을 확인해 주세요.');
   if (practice && ['open', 'running'].includes(meta().status)) return toast('시험이 열려 있는 동안에는 문제풀이 공개를 켤 수 없어요.', 4000);
   if (practice && !meta().practice && meta().status !== 'draft' && !(await confirmBox('시험 문항을 문제풀이로 공개할까요?', '학생이 정답과 해설을 모두 볼 수 있게 됩니다.', '공개', { danger: true }))) return;
-  await setMeta({ title, minutes, late, practice, appOnly, notice: { title: '', body: noticeBody }, end: { title: '고생하셨습니다', body: endBody } }); closeModal(); toast('저장했어요.');
+  await setMeta({ title, minutes, late, practice, appOnly, cam, camBatt, notice: { title: '', body: noticeBody }, end: { title: '고생하셨습니다', body: endBody } }); closeModal(); toast('저장했어요.');
 });
 on('ex-wipe', async () => {
   if (!(await confirmBox('답안을 모두 지울까요?', '이 시험의 모든 학생 답안, 이탈 기록, 장문형 점수가 지워지고 시험이 "준비 중"으로 돌아갑니다. <b>되돌릴 수 없습니다.</b>', '모두 지우기', { danger: true }))) return;
@@ -735,13 +751,13 @@ function tabResult() {
   P.sheetOpts = Object.fromEntries(sheet.map(q => [q.id, q.opts || []]));
   const sub = [['rank', '순위'], ['chart', '그래프'], ['miss', '많이 틀린 문제'], ['leave', '이탈 기록']];
   let body = '';
-  if (P.rtab === 'rank') body = `<div class="sm">이름을 누르면 그 학생이 무엇을 틀렸는지 볼 수 있습니다.</div><div class="tw"><table><tr><th class="num">순위</th><th>반</th><th>학번</th><th>이름</th><th class="num">총점</th><th class="num">자동 채점</th><th class="num">장문형</th><th class="num">이탈</th><th>제출</th></tr>
-    ${rk.map(r => `<tr><td class="num"><b>${r.rank}</b></td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td><button class="namebtn" data-a="stu-detail" data-sid="${esc(r.sid)}">${esc(r.name)}</button></td><td class="num"><b>${r.total}</b></td><td class="num">${r.mc}</td><td class="num">${r.essay}${r.essayPending ? ' <span class="pill mid">채점 전</span>' : ''}</td><td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td><td>${r.a.submittedAt ? hhmmss(r.a.submittedAt) : '<span class="pill">미제출</span>'}</td></tr>`).join('')}
-    ${absent.map(r => `<tr><td class="num">—</td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td><td colspan="5"><span class="pill no">미응시</span></td></tr>`).join('')}</table></div>${rk.length || absent.length ? '' : '<div class="sm">아직 응시한 학생이 없어요.</div>'}`;
+  if (P.rtab === 'rank') body = `<div class="sm">이름을 누르면 그 학생이 무엇을 틀렸는지 볼 수 있습니다.</div><div class="tw"><table><tr><th class="num">순위</th><th>반</th><th>학번</th><th>이름</th><th class="num">총점</th><th class="num">자동 채점</th><th class="num">장문형</th><th class="num">이탈</th><th class="num">카메라 경고 · 잠금</th><th class="num">풀이 시간</th><th>제출</th></tr>
+    ${rk.map(r => `<tr><td class="num"><b>${r.rank}</b></td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td><button class="namebtn" data-a="stu-detail" data-sid="${esc(r.sid)}">${esc(r.name)}</button></td><td class="num"><b>${r.total}</b></td><td class="num">${r.mc}</td><td class="num">${r.essay}${r.essayPending ? ' <span class="pill mid">채점 전</span>' : ''}</td><td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td><td class="num">${r.lv.face || r.lv.locks ? `${r.lv.face} · ${r.lv.locks}` : ''}</td><td class="num">${totalTime(r.a) ? C.fmtDur(totalTime(r.a)) : ''}</td><td>${r.a.submittedAt ? hhmmss(r.a.submittedAt) : '<span class="pill">미제출</span>'}</td></tr>`).join('')}
+    ${absent.map(r => `<tr><td class="num">—</td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td><td colspan="7"><span class="pill no">미응시</span></td></tr>`).join('')}</table></div>${rk.length || absent.length ? '' : '<div class="sm">아직 응시한 학생이 없어요.</div>'}`;
   else if (P.rtab === 'chart') body = `<h2>점수 분포</h2>${histChart(tot, max)}<h2 style="margin-top:8px">문항별 응답</h2><div class="sm">초록 막대(✓)가 정답, 분홍 막대는 가장 많이 고른 오답입니다.</div>${questionCharts(stats)}`;
   else if (P.rtab === 'miss') body = C.mostMissed(stats, 5).map(s => `<div class="box ${s.rate < .4 ? 'no' : 'warn'}"><b>${s.no}번 · ${s.auto ? `정답률 ${Math.round(s.rate * 100)}%` : `평균 ${s.avg.toFixed(1)} / ${s.pts}점`} · 난이도 ${esc(s.level || '')}</b>\n${esc(s.q)}${s.auto ? `\n정답: ${esc(s.answerText)}${s.topWrongText ? `\n가장 많이 고른 오답: ${esc(s.topWrongText)} (${s.choice ? s.picks[s.topWrong] : s.topWrongN}명)` : ''}` : ''}</div>`).join('') || '<div class="sm">아직 응시한 학생이 없어요.</div>';
   else body = `<div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th class="num">횟수</th><th>시각</th></tr>
-    ${took.filter(r => r.lv.count).sort((a, b) => b.lv.count - a.lv.count).map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td><td class="num">${r.lv.count}</td><td>${r.lv.list.filter(e => e.t !== 'back').map(e => hhmmss(e.at) + (e.t === 'unpin' ? '(고정 풀림)' : '')).join(', ')}</td></tr>`).join('') || '<tr><td colspan="5">이탈 기록이 없습니다.</td></tr>'}</table></div>`;
+    ${took.filter(r => r.lv.count).sort((a, b) => b.lv.count - a.lv.count).map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td><td class="num">${r.lv.count}</td><td>${r.lv.list.filter(isLeave).map(e => hhmmss(e.at) + (e.t === 'unpin' ? '(고정 풀림)' : '')).join(', ')}</td></tr>`).join('') || '<tr><td colspan="5">이탈 기록이 없습니다.</td></tr>'}</table></div>`;
   $('pmain').innerHTML = `
     <div class="kpis"><div class="kpi"><b>${took.length}</b><span>응시</span></div><div class="kpi"><b>${avg.toFixed(1)}</b><span>평균 / ${max}점</span></div><div class="kpi"><b>${tot.length ? Math.max(...tot) : 0} · ${tot.length ? Math.min(...tot) : 0}</b><span>최고 · 최저</span></div><div class="kpi"><b>${pend}</b><span>장문형 채점 전</span></div></div>
     <div class="panel"><div class="row">${m.status === 'ended' ? `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>` : '<span class="sm">시험이 끝나면 결과를 공개할 수 있습니다.</span>'}<button class="btn s gh" data-a="csv">엑셀(CSV) 내보내기</button><button class="btn s gh" data-a="pdf-all">전체 결과 PDF</button><button class="btn s gh" data-a="pdf-each">학생별 결과 PDF</button><span style="margin-left:auto">${clsFilter()}</span></div>
@@ -751,8 +767,8 @@ on('r-tab', el => { P.rtab = el.dataset.t; tabResult(); });
 on('csv', () => {
   const { sheet, rows } = resultRows(), m = meta();
   const took = C.ranked(rows.filter(r => r.took)), absent = rows.filter(r => !r.took).sort((a, b) => String(a.cls).localeCompare(String(b.cls)) || a.sid.localeCompare(b.sid));
-  const head = ['순위', '반', '학번', '이름', '총점', '만점', '자동 채점', '장문형', '답한 문항', '이탈 횟수', '이탈 시각', '시작', '제출', ...sheet.map((q, i) => `${i + 1}번(${q.pts}점)`)];
-  const line = r => [r.rank || '', r.cls, r.sid, r.name, r.took ? r.total : '미응시', r.max, r.took ? r.mc : '', r.took ? r.essay : '', r.took ? r.answered : '', r.lv.count || '', r.lv.list.filter(e => e.t !== 'back').map(e => hhmmss(e.at)).join(' '), r.took ? hhmmss(r.a.startedAt) : '', r.took && r.a.submittedAt ? hhmmss(r.a.submittedAt) : '', ...sheet.map(q => (r.took ? (r.per[q.id].graded === false ? '채점 전' : r.per[q.id].pts) : ''))];
+  const head = ['순위', '반', '학번', '이름', '총점', '만점', '자동 채점', '장문형', '답한 문항', '이탈 횟수', '이탈 시각', '카메라 경고', '잠금 횟수', '풀이 시간(초)', '시작', '제출', ...sheet.map((q, i) => `${i + 1}번(${q.pts}점)`)];
+  const line = r => [r.rank || '', r.cls, r.sid, r.name, r.took ? r.total : '미응시', r.max, r.took ? r.mc : '', r.took ? r.essay : '', r.took ? r.answered : '', r.lv.count || '', r.lv.list.filter(isLeave).map(e => hhmmss(e.at)).join(' '), r.lv.face || '', r.lv.locks || '', r.took ? Math.round(totalTime(r.a)) : '', r.took ? hhmmss(r.a.startedAt) : '', r.took && r.a.submittedAt ? hhmmss(r.a.submittedAt) : '', ...sheet.map(q => (r.took ? (r.per[q.id].graded === false ? '채점 전' : r.per[q.id].pts) : ''))];
   download(`${(m.title || '시험').replace(/[\\/:*?"<>|]/g, '_')}_결과.csv`, C.toCSV([head, ...took.map(line), ...absent.map(line)]));
 });
 
@@ -811,7 +827,7 @@ function fmtKey(q, k) {
 function studentItems(r, sheet, key) {
   return sheet.map((q, i) => {
     const k = key[q.id] || {}, p = r.per[q.id], a = r.a && r.a.a ? r.a.a[q.id] : undefined;
-    return { no: i + 1, q, mine: fmtAns(q, a), right: fmtKey(q, k), ok: p.ok, pts: p.pts, graded: p.graded, level: k.level, why: k.why };
+    return { no: i + 1, q, mine: fmtAns(q, a), right: fmtKey(q, k), ok: p.ok, pts: p.pts, graded: p.graded, level: k.level, why: k.why, sec: Number(r.a && r.a.tm && r.a.tm[q.id]) || 0 };
   });
 }
 const okText = it => (it.q.k === 'long' ? (it.graded ? (it.ok ? '만점' : '감점') : '채점 전') : it.ok ? '맞음' : (it.mine ? '틀림' : '안 풂'));
@@ -821,15 +837,16 @@ function showDetail(sid, onlyWrong = false) {
   if (!r) return;
   const items = studentItems(r, sheet, key), wrong = items.filter(it => it.ok !== true), list = onlyWrong ? wrong : items;
   modal(`<div class="edbar"><h2>${esc(r.cls)} ${esc(r.sid)} ${esc(r.name)}</h2><button class="btn s gh" data-a="pdf-one" data-sid="${esc(sid)}">이 학생 PDF</button><button class="btn s gh" data-a="modal-close">닫기</button></div>
-    <div class="kpis"><div class="kpi"><b>${r.total} / ${r.max}</b><span>총점 · ${r.rank}등</span></div><div class="kpi"><b>${r.mc}</b><span>자동 채점</span></div><div class="kpi"><b>${r.essay}${r.essayPending ? ' <small style="font-size:13px">(채점 전 ' + r.essayPending + ')</small>' : ''}</b><span>장문형</span></div><div class="kpi"><b>${r.lv.count}회</b><span>이탈${r.a.submittedAt ? ' · 제출 ' + hhmmss(r.a.submittedAt) : ' · 미제출'}</span></div></div>
+    <div class="kpis"><div class="kpi"><b>${r.total} / ${r.max}</b><span>총점 · ${r.rank}등</span></div><div class="kpi"><b>${r.mc}</b><span>자동 채점</span></div><div class="kpi"><b>${r.essay}${r.essayPending ? ' <small style="font-size:13px">(채점 전 ' + r.essayPending + ')</small>' : ''}</b><span>장문형</span></div><div class="kpi"><b>${r.lv.count}회</b><span>이탈${r.a.submittedAt ? ' · 제출 ' + hhmmss(r.a.submittedAt) : ' · 미제출'}</span></div><div class="kpi"><b>${r.lv.face} · ${r.lv.locks}</b><span>카메라 경고 · 잠금</span></div><div class="kpi"><b>${C.fmtDur(totalTime(r.a))}</b><span>풀이 시간</span></div></div>
     <div class="row"><div class="tabs"><button data-a="d-filter" data-sid="${esc(sid)}" data-w="" class="${onlyWrong ? '' : 'on'}">전체 ${items.length}문항</button><button data-a="d-filter" data-sid="${esc(sid)}" data-w="1" class="${onlyWrong ? 'on' : ''}">틀리거나 감점된 문항 ${wrong.length}</button></div></div>
-    <div class="tw"><table class="dtab"><tr><th class="num">번호</th><th>문제</th><th>학생의 답</th><th>정답</th><th>결과</th><th class="num">점수</th></tr>
+    <div class="tw"><table class="dtab"><tr><th class="num">번호</th><th>문제</th><th>학생의 답</th><th>정답</th><th>결과</th><th class="num">풀이 시간</th><th class="num">점수</th></tr>
     ${list.map(it => `<tr class="${it.ok === true ? '' : it.ok === false ? 'bad' : 'pend'}"><td class="num">${it.no}</td><td>${esc(it.q.q)}<div class="sm">${C.KIND_NAME[it.q.k]} · 난이도 ${esc(it.level || '')}</div></td>
       <td class="pre">${esc(it.mine) || '<span class="sm">(답 없음)</span>'}</td><td class="pre">${esc(it.right)}</td>
       <td><span class="pill ${it.ok === true ? 'ok' : it.ok === false ? 'no' : 'mid'}">${okText(it)}</span></td>
-      <td class="num">${it.q.k === 'long' ? `<input class="in d-num" type="number" min="0" max="${it.q.pts}" step="0.5" value="${it.graded ? it.pts : ''}" data-q="${it.q.id}" aria-label="${it.no}번 점수" style="width:70px;font-size:15px;padding:5px 6px;text-align:right"> / ${it.q.pts}` : `${it.pts} / ${it.q.pts}`}</td></tr>`).join('') || '<tr><td colspan="6">틀린 문항이 없습니다.</td></tr>'}
+      <td class="num">${it.sec ? C.fmtDur(it.sec) : ''}</td>
+      <td class="num">${it.q.k === 'long' ? `<input class="in d-num" type="number" min="0" max="${it.q.pts}" step="0.5" value="${it.graded ? it.pts : ''}" data-q="${it.q.id}" aria-label="${it.no}번 점수" style="width:70px;font-size:15px;padding:5px 6px;text-align:right"> / ${it.q.pts}` : `${it.pts} / ${it.q.pts}`}</td></tr>`).join('') || '<tr><td colspan="7">틀린 문항이 없습니다.</td></tr>'}
     </table></div>
-    ${r.lv.count ? `<div class="sm">이탈 시각: ${r.lv.list.filter(e => e.t !== 'back').map(e => hhmmss(e.at) + (e.t === 'unpin' ? '(고정 풀림)' : e.t === 'nopin' ? '(고정 없이 계속)' : '')).join(', ')}</div>` : ''}`, { wide: true });
+    ${r.lv.count ? `<div class="sm">이탈 시각: ${r.lv.list.filter(isLeave).map(e => hhmmss(e.at) + (e.t === 'unpin' ? '(고정 풀림)' : e.t === 'nopin' ? '(고정 없이 계속)' : '')).join(', ')}</div>` : ''}`, { wide: true });
   document.querySelectorAll('.d-num').forEach(inp => inp.addEventListener('change', async () => { if (inp.value === '') return; await setEssay(sid, inp.dataset.q, +inp.value); showDetail(sid, onlyWrong); if (P.tab === 'result') tabResult(); }));
 }
 on('d-filter', el => showDetail(el.dataset.sid, !!el.dataset.w));
@@ -846,9 +863,9 @@ function printStudent(r, sheet, key, m) {
   const items = studentItems(r, sheet, key);
   return `<section class="pr-page"><h1>${esc(m.title || '시험')} — 개인 결과</h1>
     <div class="pr-meta"><b>${esc(r.cls)} · ${esc(r.sid)} · ${esc(r.name)}</b><span>총점 <b>${r.total} / ${r.max}점</b> (${r.rank}등) · 자동 채점 ${r.mc}점 · 장문형 ${r.essay}점${r.essayPending ? ` (채점 전 ${r.essayPending}문항)` : ''}</span>
-      <span>제출 ${r.a.submittedAt ? hhmmss(r.a.submittedAt) : '안 함'} · 이탈 ${r.lv.count}회${r.lv.count ? ' (' + r.lv.list.filter(e => e.t !== 'back').map(e => hhmmss(e.at)).join(', ') + ')' : ''}</span></div>
-    <table><tr><th>번호</th><th>문제</th><th>학생의 답</th><th>정답</th><th>결과</th><th>점수</th></tr>
-    ${items.map(it => `<tr class="${it.ok === false ? 'bad' : ''}"><td class="c">${it.no}</td><td>${esc(it.q.q)}</td><td class="pre">${esc(it.mine) || '(답 없음)'}</td><td class="pre">${esc(it.right)}</td><td class="c">${okText(it)}</td><td class="c">${it.q.k === 'long' && !it.graded ? '—' : it.pts} / ${it.q.pts}</td></tr>`).join('')}
+      <span>제출 ${r.a.submittedAt ? hhmmss(r.a.submittedAt) : '안 함'} · 이탈 ${r.lv.count}회${r.lv.count ? ' (' + r.lv.list.filter(isLeave).map(e => hhmmss(e.at)).join(', ') + ')' : ''} · 카메라 경고 ${r.lv.face}회 · 잠금 ${r.lv.locks}회 · 풀이 시간 ${C.fmtDur(totalTime(r.a))}</span></div>
+    <table><tr><th>번호</th><th>문제</th><th>학생의 답</th><th>정답</th><th>결과</th><th>풀이 시간</th><th>점수</th></tr>
+    ${items.map(it => `<tr class="${it.ok === false ? 'bad' : ''}"><td class="c">${it.no}</td><td>${esc(it.q.q)}</td><td class="pre">${esc(it.mine) || '(답 없음)'}</td><td class="pre">${esc(it.right)}</td><td class="c">${okText(it)}</td><td class="c">${it.sec ? C.fmtDur(it.sec) : ''}</td><td class="c">${it.q.k === 'long' && !it.graded ? '—' : it.pts} / ${it.q.pts}</td></tr>`).join('')}
     </table><div class="pr-foot">푸른시험 · ${today()} 출력</div></section>`;
 }
 function printData() {

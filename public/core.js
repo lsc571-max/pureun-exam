@@ -290,8 +290,30 @@ export function histogram(totals, max, bins = 10) {
 // ev: { pushId: {t:'leave'|'back'|'unpin'|..., at} } → 시각 순 목록과 이탈 횟수
 export function leaveSummary(ev) {
   const list = Object.values(ev || {}).filter(e => e && e.t).sort((a, b) => (a.at || 0) - (b.at || 0));
-  return { list, count: list.filter(e => e.t === 'leave' || e.t === 'unpin').length };
+  let warn = 0;   // 마지막 잠금 뒤에 받은 카메라 경고 수 (2회가 되면 잠깁니다)
+  for (const e of list) { if (e.t === 'lock') warn = 0; else if (e.t === 'face') warn++; }
+  const cam = list.filter(e => ['camoff', 'camon', 'camfail', 'nocam'].includes(e.t)).pop();
+  return {
+    list, count: list.filter(e => e.t === 'leave' || e.t === 'unpin').length,
+    face: list.filter(e => e.t === 'face').length,     // 카메라 경고 횟수
+    locks: list.filter(e => e.t === 'lock').length,    // 화면이 잠긴 횟수
+    warn, camOff: !!cam && cam.t !== 'camon',          // 지금 카메라가 꺼져 있는지
+  };
 }
+export const EV_NAME = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함', face: '카메라 경고 (얼굴이 벗어남)', faceok: '얼굴이 다시 보임', lock: '화면 잠김 (경고 2회)',
+  camoff: '카메라 자동 꺼짐 (발열·배터리)', camon: '카메라 다시 켜짐', camfail: '카메라를 켜지 못함', nocam: '카메라 없이 시작' };
+// 얼굴 감지기가 주는 점(오른쪽 눈, 왼쪽 눈, 코끝, 입, 오른쪽 귀, 왼쪽 귀; x는 0~1)으로 고개가 좌우로 돌아간 각도를 어림합니다.
+// 정면이면 코가 두 귀의 한가운데에 있고, 고개를 돌릴수록 한쪽 귀에 가까워집니다.
+export function faceYaw(kp) {
+  if (!kp || kp.length < 6) return 0;
+  const nose = kp[2].x, dR = Math.abs(nose - kp[4].x), dL = Math.abs(kp[5].x - nose);
+  if (dR + dL < 1e-6) return 0;
+  const between = (nose - kp[4].x) * (kp[5].x - nose) >= 0;                 // 코가 두 귀 사이에 있는가
+  if (!between) return 90 * Math.sign(dR - dL || 1);                        // 귀 바깥으로 나갔으면 옆얼굴
+  return Math.atan((dR - dL) / (dR + dL) / 1.1) * 180 / Math.PI;
+}
+// 풀이 시간(초)을 "3분 20초"처럼
+export const fmtDur = sec => { sec = Math.max(0, Math.round(sec || 0)); const m = Math.floor(sec / 60), r = sec % 60; return m ? `${m}분${r ? ' ' + r + '초' : ''}` : `${r}초`; };
 
 /* ---------- 명단 ---------- */
 export const normSid = s => String(s == null ? '' : s).replace(/\s+/g, '').toUpperCase();

@@ -247,6 +247,23 @@ test('시험 시간은 학생마다 자기가 시작한 때부터 흐른다', as
   await assertFails(ans('u2', 'five', B).child('a/q1').set(2));
 });
 
+test('풀이 시간은 자기 것만 쓰고, 잠긴 화면은 교수만 풀 수 있다', async () => {
+  await enter('u1', A, '홍길동', 'A반');
+  await enter('u2', B, '김철수', 'B반');
+  await begin('u1', 'run');
+  await assertSucceeds(ans('u1', 'run').update({ 'tm/q1': 42, 'tm/q2': 7.5 }));
+  await assertFails(ans('u1', 'run').child('tm/q1').set('오래'));
+  await assertFails(ans('u1', 'run').child('tm/q1').set(-5));
+  await assertFails(ans('u1', 'run').child('tm/q1').set(9e9));
+  await assertFails(ans('u2', 'run').child('tm/q1').set(1));                    // 남의 기록
+  await assertSucceeds(ans('u1', 'run').child('ev').push({ t: 'face', at: Date.now() }));   // 카메라 경고
+  await assertSucceeds(ans('u1', 'run').child('ev').push({ t: 'lock', at: Date.now() }));   // 잠김
+  await assertFails(ans('u1', 'run').child('unlock').set(1));                   // 학생이 스스로 풀 수 없음
+  await assertFails(ans('u1', 'run').update({ unlock: 99 }));
+  await assertSucceeds(prof().ref(`answers/run/${A}/unlock`).set(1));           // 교수가 풀어 줌
+  await assertSucceeds(ans('u1', 'run').child('unlock').get());                 // 학생 화면이 풀림을 알 수 있음
+});
+
 test('장문형 점수: 공개 뒤 자기 것만 읽고, 학생은 못 쓴다', async () => {
   await enter('u1', A, '홍길동', 'A반');
   await enter('u2', B, '김철수', 'B반');

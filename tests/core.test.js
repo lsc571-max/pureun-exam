@@ -204,6 +204,28 @@ test('이탈 기록: 횟수와 시각 순서', () => {
   assert.equal(C.leaveSummary(null).count, 0);
 });
 
+test('카메라 경고 · 잠금 횟수와 카메라 상태', () => {
+  const ev = (...ts) => Object.fromEntries(ts.map((t, i) => ['k' + i, { t, at: i + 1 }]));
+  let s = C.leaveSummary(ev('leave', 'back', 'face', 'faceok'));
+  assert.deepEqual([s.count, s.face, s.locks, s.warn, s.camOff], [1, 1, 0, 1, false]);
+  s = C.leaveSummary(ev('face', 'face', 'lock', 'face'));
+  assert.deepEqual([s.face, s.locks, s.warn], [3, 1, 1], '잠긴 뒤에는 경고를 다시 1회부터 셈');
+  assert.equal(C.leaveSummary(ev('camoff')).camOff, true); assert.equal(C.leaveSummary(ev('camoff', 'camon')).camOff, false);
+  assert.equal(C.leaveSummary(ev('nocam', 'leave')).camOff, true); assert.equal(C.leaveSummary(ev('leave')).camOff, false);
+  for (const t of ['leave', 'unpin', 'face', 'lock', 'camoff', 'camfail', 'nocam']) assert.ok(C.EV_NAME[t], t);
+});
+
+test('고개 돌린 각도 어림: 정면은 0도, 30도를 넘으면 걸러진다', () => {
+  // 머리를 위에서 본 원으로 보고 점을 만듭니다: 귀는 양옆, 코는 앞쪽으로 조금 나와 있음
+  const face = deg => { const t = deg * Math.PI / 180, cx = 0.5, r = 0.15; return [{ x: cx - 0.05 }, { x: cx + 0.05 }, { x: cx + 1.1 * r * Math.sin(t) }, { x: cx }, { x: cx - r * Math.cos(t) }, { x: cx + r * Math.cos(t) }]; };
+  for (const d of [0, 10, 20, 29, 31, -20, -35]) assert.ok(Math.abs(C.faceYaw(face(d)) - d) < 0.5, `${d}도 → ${C.faceYaw(face(d))}`);
+  for (const d of [45, 60, 80, -50]) assert.ok(Math.abs(C.faceYaw(face(d))) > 30 && Math.sign(C.faceYaw(face(d))) === Math.sign(d), `${d}도`);   // 많이 돌리면 코가 귀를 넘어가 옆얼굴로 봄
+  assert.ok(Math.abs(C.faceYaw(face(29))) <= 30); assert.ok(Math.abs(C.faceYaw(face(31))) > 30);
+  assert.equal(Math.abs(C.faceYaw([{ x: 0 }, { x: 0 }, { x: 0.9 }, { x: 0 }, { x: 0.4 }, { x: 0.6 }])), 90, '코가 귀 바깥이면 옆얼굴');
+  assert.equal(C.faceYaw([]), 0);
+  assert.equal(C.fmtDur(200), '3분 20초'); assert.equal(C.fmtDur(45), '45초'); assert.equal(C.fmtDur(120), '2분'); assert.equal(C.fmtDur(undefined), '0초');
+});
+
 test('반 이름 · 학번 · 이름 다듬기', () => {
   assert.equal(C.normSid(' 2026 1234 '), '20261234'); assert.equal(C.normName(' 홍 길동 '), '홍길동');
   assert.equal(C.normCls('  1학년   A반 '), '1학년 A반');

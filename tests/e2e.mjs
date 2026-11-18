@@ -36,7 +36,7 @@ const QS = ['첫째 문제', '둘째 문제', '셋째 문제', '넷째 문제', 
 
 let step = '';
 // 어디선가 멈추면 끝없이 기다리지 않고 실패로 끝냅니다
-const watchdog = setTimeout(() => { console.error(`\n시간 초과 — 멈춘 단계: ${step}`); process.exit(1); }, 230000);
+const watchdog = setTimeout(() => { console.error(`\n시간 초과 — 멈춘 단계: ${step}`); process.exit(1); }, 330000);
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 412, height: 860 } });
 const errors = [];
@@ -329,6 +329,8 @@ try {
     if (i < 4) await act(stu, 'next');
   }
   assert.deepEqual(seen.slice().sort(), QS.slice().sort(), '문제가 빠지거나 겹침');
+  const tm = (await db(prof)).answers[Object.keys((await db(prof)).exams)[0]]['20261234'].tm || {};
+  assert.ok(Object.keys(tm).length >= 4 && Object.values(tm).every(v => v > 0 && v < 60), '문항별 풀이 시간이 기록되지 않음: ' + JSON.stringify(tm));
   d = await db(prof);
   const sheet = JSON.parse(d.sheets[exId].data), idOf = t => sheet.find(q => q.q === t).id;
   let ans = d.answers[exId]['20261234'].a;
@@ -490,7 +492,10 @@ try {
   assert.match(csv, /순위,반,학번,이름,총점/); assert.match(csv, /1,A반,20261234,홍길동,18,23,11,7,5,2,/); assert.match(csv, /미응시/);
 
   say('끝난 시험 다시 열기: 못 본 학생만 응시한다');
-  await act(prof, 'p-tab', '[data-t="run"]'); await act(prof, 'ex-resume');
+  await act(prof, 'p-tab', '[data-t="run"]');
+  await act(prof, 'ex-settings'); await prof.click('#s-cam'); await act(prof, 's-save');   // 다시 여는 시험은 카메라 얼굴 확인을 켬
+  await prof.waitForFunction(() => document.getElementById('modal').hidden);
+  await act(prof, 'ex-resume');
   await prof.fill('#rs-min', '3'); await act(prof, 'rs-go');
   await prof.waitForSelector('[data-a="ex-end"]');
   d = await db(prof);
@@ -498,8 +503,9 @@ try {
   // 늦게 온 학생은 "안드로이드 앱"으로 응시한다고 보고, 앱이 해 주는 일을 흉내 냅니다.
   const late = await ctx.newPage(); watch(late, '늦은 학생(앱)');
   await late.addInitScript(() => {
-    const st = window.__app = { dnd: false, auto: false, calls: [] };
-    window.PureunApp = { isDndOn: () => st.dnd, canAutoDnd: () => st.auto, requestDndAccess: () => st.calls.push('requestDndAccess'), startLock: () => st.calls.push('startLock'), stopLock: () => st.calls.push('stopLock') };
+    const st = window.__app = { dnd: false, auto: false, calls: [], hot: 0, face: { face: true, yaw: 0 } };
+    window.__fakeFace = () => st.face;   // 카메라와 얼굴 감지기를 대신함
+    window.PureunApp = { thermalStatus: () => st.hot, isDndOn: () => st.dnd, canAutoDnd: () => st.auto, requestDndAccess: () => st.calls.push('requestDndAccess'), startLock: () => st.calls.push('startLock'), stopLock: () => st.calls.push('stopLock') };
   });
   await enter(late, 'B반', '20261302', '이영희');
   await late.waitForSelector('[data-a="open-exam"]'); await act(late, 'open-exam');
@@ -509,6 +515,9 @@ try {
   await act(late, 'dnd');
   assert.deepEqual(await late.evaluate(() => window.__app.calls), ['requestDndAccess']);
   await late.evaluate(() => { window.__app.auto = true; });          // 학생이 허용하고 돌아옴
+  await late.waitForFunction(() => /자동으로 켜지고/.test(document.body.textContent), null, { timeout: 5000 });
+  assert.ok(await late.isDisabled('[data-a="start"]'), '카메라를 확인하지 않았는데 시작이 됨');
+  await act(late, 'cam-test');
   await late.waitForFunction(() => !document.querySelector('[data-a="start"]').disabled, null, { timeout: 5000 });
   assert.match(await late.textContent('#app'), /자동으로 켜지고/);
   await act(late, 'start');
@@ -528,6 +537,38 @@ try {
   d = await db(prof);
   assert.deepEqual(Object.values(d.answers[exId]['20261302'].ev).map(e => e.t).sort(), ['back', 'unpin']);
   assert.match(d.answers[exId]['20261302'].dev, /^app /);
+  say('카메라: 얼굴이 3초 넘게 안 보이면 화면을 가리고 경고, 돌아오면 저절로 풀린다');
+  assert.match(await late.textContent('.bar .watch'), /부정행위 감시 중/);
+  await late.evaluate(() => { window.__app.face = { face: false, yaw: 0 }; });
+  await late.waitForFunction(() => { const g = document.getElementById('guard'); return !g.hidden && g.classList.contains('black') && /얼굴이 보이지 않습니다.*경고 1회/s.test(g.textContent); }, null, { timeout: 8000 });
+  await late.evaluate(() => { window.__app.face = { face: true, yaw: 10 }; });
+  await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 4000 });
+  say('카메라: 고개를 30도 넘게 돌려 경고 2회가 되면 잠기고, 교수가 풀어 준다');
+  await late.evaluate(() => { window.__app.face = { face: true, yaw: 45 }; });
+  await late.waitForFunction(() => /화면이 잠겼습니다.*교수님께 확인받으세요/s.test(document.getElementById('guard').textContent) && !document.getElementById('guard').hidden, null, { timeout: 8000 });
+  await late.evaluate(() => { window.__app.face = { face: true, yaw: 0 }; window.onPureunEvent('leave'); window.onPureunEvent('back'); });
+  await late.waitForTimeout(1500);
+  assert.match(await late.textContent('#guard'), /화면이 잠겼습니다/, '얼굴이 돌아오거나 앱에 돌아온 것만으로 잠금이 풀림');
+  await late.reload(); await late.waitForSelector('[data-a="open-exam"]'); await act(late, 'open-exam');   // 앱을 껐다 켜도 잠금은 그대로
+  await late.waitForFunction(() => /화면이 잠겼습니다/.test(document.getElementById('guard').textContent) && !document.getElementById('guard').hidden);
+  await prof.waitForSelector('#pband .alarm');
+  assert.match(await prof.textContent('#pband'), /잠긴 학생 1명/);
+  await shot(late, 's11-lock'); await shot(prof, 'p11-locked');
+  await prof.click('[data-a="unlock"][data-sid="20261302"]');
+  await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 5000 });
+  d = await db(prof);
+  const lateEv = Object.values(d.answers[exId]['20261302'].ev).map(e => e.t);
+  assert.equal(lateEv.filter(t => t === 'face').length, 2); assert.equal(lateEv.filter(t => t === 'lock').length, 1); assert.ok(lateEv.includes('faceok'));
+  assert.equal(d.answers[exId]['20261302'].unlock, 1);
+  assert.match(await prof.locator('#pmain tr', { hasText: '이영희' }).textContent(), /2회.*1회/s);   // 카메라 경고 2회 · 잠금 1회
+  say('카메라: 기기가 뜨거워지면 저절로 꺼지고, "감시 중" 표시는 남는다');
+  await late.evaluate(() => { window.__app.hot = 3; });
+  await late.waitForFunction(id => Object.values(JSON.parse(localStorage.getItem('mockdb')).answers[id]['20261302'].ev).some(x => x.t === 'camoff'), exId, { timeout: 30000 });   // 발열 확인은 20초마다
+  await late.evaluate(() => { window.__app.face = { face: false, yaw: 0 }; });
+  await late.waitForTimeout(4500);
+  assert.ok(await late.isHidden('#guard'), '카메라가 꺼졌는데 화면이 가려짐: ' + (await late.textContent('#guard')) + ' / ' + JSON.stringify(Object.values((await db(prof)).answers[exId]['20261302'].ev).map(e => e.t)));
+  assert.match(await late.textContent('.bar .watch'), /부정행위 감시 중/);
+  await prof.waitForFunction(() => /카메라 꺼짐/.test([...document.querySelectorAll('#pmain tr')].find(r => /이영희/.test(r.textContent))?.textContent || ''));
   await stu.reload(); await stu.waitForSelector('[data-a="open-exam"]'); await act(stu, 'open-exam');
   await stu.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent)); // 제출한 학생은 다시 못 풂
   await act(prof, 'ex-end'); await act(prof, 'dlg-yes'); await prof.waitForSelector('[data-a="ex-release"]');

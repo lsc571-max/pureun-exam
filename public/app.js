@@ -3,6 +3,7 @@ import * as C from './core.js';
 import { createAnswerStore } from './save.js';
 import { S, be, setBackend, APP, parse } from './state.js';
 import { media, typeChip, answerHtml } from './view.js';
+import { testCamera, startWatch } from './face.js';
 import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, closeZoom, CIRCLED, errText, hhmmss } from './ui.js';
 
 const CONFIG = {
@@ -167,7 +168,8 @@ function viewNotice() {
   if (isOver(m)) return viewDone();
   const running = m.status === 'running';
   const needApp = !!m.appOnly && IS_ANDROID && !APP;   // 안드로이드는 앱으로만 응시
-  const ready = running && N.checked && dndOn() && !needApp;
+  const camReady = !m.cam || N.camOk || N.camSkip;
+  const ready = running && N.checked && dndOn() && !needApp && camReady;
   const nt = m.notice || {};
   const dndBox = !APP ? `<div class="box info">전화와 알림이 시험을 방해하지 않게 <b>방해 금지 모드</b>를 켜 주세요.${/iPhone|iPad/i.test(navigator.userAgent) ? '\n아이폰은 <b>사용법 유도</b>(설정 → 손쉬운 사용)를 켜고 옆 버튼을 세 번 누르면 시험 화면이 고정됩니다.' : ''}</div><button class="btn gh" style="flex:none" data-a="dnd">방해 금지 모드 켜는 방법</button>`
     : appCall('canAutoDnd', false) ? '<div class="box ok">시험을 시작하면 <b>방해 금지 모드가 자동으로 켜지고</b>, 끝나면 원래대로 돌아갑니다.</div>'
@@ -186,12 +188,19 @@ function viewNotice() {
         ${APP ? '<li>시작하면 <b>화면 고정</b>을 묻는 창이 뜹니다. <b>확인</b>을 눌러 주세요. 고정이 풀리면 기록되고 문제가 가려집니다.</li>' : ''}
       </ul>
       ${needApp ? `<div class="box no"><b>이 시험은 안드로이드 앱으로만 볼 수 있습니다.</b>\n아래에서 앱을 내려받아 설치한 뒤, 앱에서 다시 입장해 주세요.</div><a class="btn am" style="flex:none;text-decoration:none" href="${APK_URL}">안드로이드 앱 내려받기</a>` : dndBox}
+      ${!m.cam || needApp ? '' : N.camOk ? '<div class="box ok">카메라가 확인되었습니다. 시험 중에는 얼굴이 화면을 향하게 해 주세요.</div>'
+        : N.camSkip ? '<div class="box warn">카메라 없이 시작합니다. 교수님 화면에 표시됩니다.</div>'
+        : `<div class="box info">이 시험은 <b>전면 카메라</b>로 얼굴이 화면을 보고 있는지 확인합니다. 영상은 저장되거나 전송되지 않습니다. 얼굴이 몇 초 넘게 보이지 않으면 경고가 기록되고, 경고가 2회 쌓이면 화면이 잠깁니다.</div>
+          ${N.camErr ? '<div class="box no"><b>카메라를 켤 수 없어요.</b> 카메라 사용을 허용했는지 확인하고 다시 눌러 주세요. 계속 안 되면 교수님께 말씀하세요.</div>' : ''}
+          <button class="btn am" style="flex:none" data-a="cam-test">카메라 확인하기</button>${N.camErr ? '<button class="btn gh" style="flex:none" data-a="cam-skip">카메라 없이 시작 (교수님께 표시됨)</button>' : ''}`}
       <button class="check ${N.checked ? 'on' : ''}" data-a="agree" aria-pressed="${N.checked}"><i>✓</i>확인했습니다</button>
       <div class="sm">${running ? '' : '교수님이 시험을 시작하면 아래 버튼이 켜집니다. 이 화면에서 기다려 주세요.'}</div>
     </div>
     <div class="foot"><button class="btn gh" style="flex:0 0 30%" data-a="home">나가기</button><button class="btn am" data-a="start" ${ready ? '' : 'disabled'}>시험 시작</button></div></div>`;
   clearInterval(noticeT);
-  if (APP) noticeT = setInterval(() => { if (view !== 'notice') return clearInterval(noticeT); const b = document.querySelector('[data-a=start]'); if (b && b.disabled === (running && N.checked && dndOn() && !needApp)) viewNotice(); }, 1000);
+  // 앱: 방해 금지 설정을 바꾸고 돌아오면 안내와 시작 버튼을 바로 고쳐 보여 줍니다
+  const dndShown = `${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}`;
+  if (APP) noticeT = setInterval(() => { if (view !== 'notice') return clearInterval(noticeT); if (`${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}` !== dndShown) keepScroll(viewNotice); }, 1000);
 }
 on('agree', () => { N.checked = !N.checked; const y = document.querySelector('.body').scrollTop; viewNotice(); document.querySelector('.body').scrollTop = y; });
 on('dnd', () => {
@@ -200,6 +209,12 @@ on('dnd', () => {
     <div class="txt"><b>아이폰</b>\n화면 오른쪽 위에서 아래로 쓸어내려 제어 센터를 열고 → 집중 모드 → 방해금지 모드를 누릅니다.\n\n<b>안드로이드</b>\n화면 위에서 아래로 두 번 쓸어내리고 → 방해 금지를 누릅니다.</div>
     <button class="btn" data-a="modal-close">알겠습니다</button>`);
 });
+const keepScroll = fn => { const b = document.querySelector('.body'), y = b ? b.scrollTop : 0; fn(); const n = document.querySelector('.body'); if (n) n.scrollTop = y; };
+on('cam-test', async () => {
+  try { await testCamera(); N.camOk = true; N.camErr = false; } catch (e) { N.camErr = true; }
+  if (view === 'notice') keepScroll(viewNotice);
+});
+on('cam-skip', () => { N.camSkip = true; keepScroll(viewNotice); });
 on('start', () => startExam());
 
 /* ================= 학생: 시험 보기 ================= */
@@ -226,6 +241,9 @@ async function startExam() {
       id, path, startedAt, until: mine.until || 0, sheet, byId: Object.fromEntries(sheet.map(q => [q.id, q])), imgs: imgs || {},
       order: C.examOrder(sheet, id, S.me.sid), idx: Math.max(0, +(sessionStorage.getItem('idx:' + id) || 0)),
       sess, leaves: C.leaveSummary(mine.ev).count, away: false, unsubs: [], done: false, typing: 0,
+      tm: { ...(mine.tm || {}) }, tmDirty: {}, curQ: '', qStart: 0, ticks: 0,                                   // 문항별 풀이 시간(초)
+      camWarn: C.leaveSummary(mine.ev).warn, locks: C.leaveSummary(mine.ev).locks, unlockN: mine.unlock || 0,   // 카메라 경고 · 잠금
+      watch: null, camDown: false, guardKind: '',
     };
     X.idx = Math.min(X.idx, X.order.length - 1);
     X.store = createAnswerStore({
@@ -235,6 +253,10 @@ async function startExam() {
     });
     X.store.load(mine.a || {});
     X.unsubs.push(be.on(path + '/sess', v => { if (X && !X.done && v && v !== X.sess) otherWindow(); }));
+    X.unsubs.push(be.on(path + '/unlock', v => {   // 교수가 잠긴 화면을 풀어 줌
+      if (!X) return; X.unlockN = v || 0;
+      if (!locked() && X.guardKind === 'lock') { hideGuard(); if (X.watch) X.watch.reset(); resumeTime(); toast('교수님이 잠금을 풀었습니다. 계속 푸세요.', 4000); }
+    }));
     X.unsubs.push(be.on(path + '/until', v => { if (X) { X.until = v || 0; tick(); } }));   // 교수가 이 학생의 시간을 따로 준 경우
     X.unsubs.push(be.on(path + '/submittedAt', v => { if (X && !X.done && v) finish(true); }));
     X.unsubs.push(be.onConnected(c => { if (X) { X.conn = c; paintSave(); } }));
@@ -244,6 +266,10 @@ async function startExam() {
     try { history.pushState({ exam: 1 }, ''); } catch (e) {}   // 뒤로 가기로 시험 화면을 벗어나지 않게
     keepAwake();
     view = 'exam'; renderExam(); tick();
+    if (S.exams[id].cam) {
+      if (N && N.camSkip) { X.camDown = true; logEv('nocam'); } else camStart();
+      if (locked()) showLock();
+    }
   } catch (e) {
     console.error(e); X = null;
     if (/PERMISSION/i.test(String(e.code || e.message))) { toast('지금은 시험을 시작할 수 없어요.'); viewNotice(); } else toast(errText(e));
@@ -251,6 +277,7 @@ async function startExam() {
 }
 function stopExam() {
   if (!X) return;
+  camStop();
   clearInterval(X.tick); clearInterval(X.pinPoll); X.unsubs.forEach(u => { try { u(); } catch (e) {} });
   app.classList.remove('lock'); $('guard').hidden = true; closeZoom(); closeModal();
   try { if (APP && APP.stopLock) APP.stopLock(); } catch (e) {}
@@ -264,6 +291,7 @@ function tick() {
   if (!X || X.done) return;
   const m = S.exams[X.id];
   if (!m || m.status !== 'running') return finish(true);
+  if (++X.ticks % 40 === 0) { saveTime(); camPolicy(); }   // 20초마다 풀이 시간을 저장하고, 발열·배터리를 확인
   const left = deadline(m, X.startedAt, X.until) - be.now();
   const c = $('clock'); if (c) { c.textContent = C.fmtClock(left); c.classList.toggle('low', left < 5 * 60000); }
   if (left <= 0) finish(true);
@@ -280,9 +308,10 @@ function renderExam() {
   if (!X) return;
   flushTyping();
   const o = X.order[X.idx], q = X.byId[o.id], a = X.store.get(q.id), n = X.order.length;
+  if (X.curQ !== q.id) { saveTime(); X.curQ = q.id; X.qStart = paused() ? 0 : Date.now(); }
   sessionStorage.setItem('idx:' + X.id, X.idx);
   const body = answerHtml(q, o, a);
-  app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span><span class="clock" id="clock">--:--</span></div>
+  app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span>${S.exams[X.id] && S.exams[X.id].cam ? '<span class="watch"><i></i>부정행위 감시 중</span>' : ''}<span class="clock" id="clock">--:--</span></div>
     <div class="prog"><i style="width:${(X.idx + 1) / n * 100}%"></i></div>
     <div class="body split"><div class="qa"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, X.imgs)}</div><div class="qb">${body}<div class="save" id="save" style="margin-top:auto"></div></div></div>
     <div class="foot"><button class="btn gh" data-a="prev" ${X.idx ? '' : 'disabled'}>이전</button><button class="btn gh" data-a="qlist">문항 목록</button>${X.idx < n - 1 ? '<button class="btn" data-a="next">다음</button>' : '<button class="btn am" data-a="qlist">제출</button>'}</div></div>`;
@@ -337,6 +366,7 @@ async function finish(auto) {
   X.done = true; flushTyping();
   const { id, path, store } = X;
   // 1) 남은 답을 모두 서버에 넣고  2) 그다음에 제출 표시를 합니다. (제출 표시가 먼저 들어가면 뒤따르는 답이 거절됩니다)
+  try { await within(saveTime(), 3000); } catch (e) {}
   const drained = await store.drain(auto ? 7000 : 8000);
   let sent = false;
   if (drained) {
@@ -365,14 +395,76 @@ async function lateSend(store, path, id) {
 
 /* ---------- 부정행위 방지: 이탈 기록 · 복사 차단 ---------- */
 function logEv(t) { if (X) be.push(ansPath() + '/ev', { t, at: be.now() }).catch(() => {}); }
-function wentAway(t) { if (!X || X.done || X.away) return; X.away = true; X.leaves++; logEv(t); }
+const locked = () => !!X && X.locks > X.unlockN;
+// 풀이 시간: 문항을 보고 있는 동안만 셉니다 (화면이 가려지거나 벗어난 동안은 세지 않음)
+const paused = () => !X || X.away || locked() || !$('guard').hidden;
+function addTime() {
+  if (!X || !X.curQ || !X.qStart) return;
+  const d = (Date.now() - X.qStart) / 1000; X.qStart = Date.now();
+  if (d <= 0 || d > 3600) return;
+  X.tm[X.curQ] = Math.round(((X.tm[X.curQ] || 0) + d) * 10) / 10; X.tmDirty[X.curQ] = true;
+}
+function pauseTime() { addTime(); if (X) X.qStart = 0; }
+function resumeTime() { if (X && !X.done && !X.qStart && !paused()) X.qStart = Date.now(); }
+function saveTime() {
+  if (!X) return Promise.resolve();
+  addTime();
+  const ids = Object.keys(X.tmDirty); if (!ids.length) return Promise.resolve();
+  const patch = Object.fromEntries(ids.map(id => ['tm/' + id, Math.min(100000, X.tm[id])])); X.tmDirty = {};
+  return be.update(X.path, patch).catch(() => {});
+}
+function wentAway(t) { if (!X || X.done || X.away) return; pauseTime(); X.away = true; X.leaves++; logEv(t); }
 function cameBack() {
   if (!X || X.done || !X.away || X.unpinned) return;
   X.away = false; logEv('back');
   showGuard(`<div class="h1">시험 화면을 벗어났습니다</div><div class="txt">벗어난 횟수와 시각이 기록되었습니다.\n지금까지 <b>${X.leaves}회</b></div><button class="btn am" style="flex:none" data-a="guard-ok">시험으로 돌아가기</button>`);
 }
-function showGuard(html) { const g = $('guard'); g.innerHTML = `<div style="max-width:420px;display:flex;flex-direction:column;gap:16px;text-align:center">${html}</div>`; g.hidden = false; }
-on('guard-ok', () => { $('guard').hidden = true; });
+// kind: 'face'(얼굴이 돌아오면 저절로 걷힘) · 'lock'(교수가 풀어야 함) · ''(그 밖). 잠긴 동안에는 다른 안내로 덮지 않습니다.
+function showGuard(html, kind = '') {
+  if (X && locked() && kind !== 'lock') return;
+  const g = $('guard'); g.innerHTML = `<div style="max-width:420px;display:flex;flex-direction:column;gap:16px;text-align:center">${html}</div>`;
+  g.classList.toggle('black', kind === 'face' || kind === 'lock'); g.hidden = false;
+  if (X) { X.guardKind = kind; pauseTime(); }
+}
+function hideGuard() { $('guard').hidden = true; if (X) X.guardKind = ''; }
+on('guard-ok', () => { hideGuard(); resumeTime(); });
+
+/* ---------- 전면 카메라 얼굴 확인 ---------- */
+async function camStart() {
+  if (!X || X.watch || X.done || X.camStarting) return;
+  X.camStarting = true; const mine = X;
+  try {
+    const w = await startWatch({ onAway: faceAway, onBack: faceBack });
+    if (X !== mine || mine.done) return w.stop();
+    X.watch = w;
+    if (X.camDown) { X.camDown = false; logEv('camon'); }
+  } catch (e) {
+    if (X === mine && !X.camFailed) { X.camFailed = true; X.camDown = true; logEv('camfail'); }   // 권한 거부·카메라 없음·감지기를 받지 못함 → 교수 화면에 표시
+  } finally { mine.camStarting = false; }
+}
+function camStop() { if (X && X.watch) { X.watch.stop(); X.watch = null; } }
+// 얼굴이 몇 초 넘게 안 보임(또는 고개가 돌아감): 화면을 검게 가리고 경고. 경고가 2회 쌓이면 잠급니다.
+function faceAway(why) {
+  if (!X || X.done || locked()) return;
+  X.camWarn++; logEv('face');
+  if (X.camWarn >= 2) { X.camWarn = 0; X.locks++; logEv('lock'); return showLock(); }
+  showGuard(`<div class="h1">${why === 'turn' ? '고개가 돌아가 있습니다' : '얼굴이 보이지 않습니다'}</div><div class="txt">화면을 정면으로 봐 주세요. 얼굴이 다시 보이면 시험 화면이 돌아옵니다.\n<b>경고 ${X.camWarn}회</b> — 한 번 더 받으면 화면이 잠깁니다.</div>`, 'face');
+}
+function faceBack() { if (X && !X.done && X.guardKind === 'face') { hideGuard(); logEv('faceok'); resumeTime(); } }
+function showLock() {
+  showGuard(`<div class="h1">화면이 잠겼습니다</div><div class="txt">카메라 경고가 2회 쌓였습니다.\n<b>손을 들고 교수님께 확인받으세요.</b>\n교수님이 풀어 주면 이어서 풀 수 있습니다. 시험 시간은 계속 흐릅니다.</div><div class="sm" style="color:#c9d6cf">잠금 ${X.locks}회</div>`, 'lock');
+}
+// 기기가 뜨겁거나(앱) 배터리가 모자라면(웹) 카메라를 저절로 끄고, 괜찮아지면 다시 켭니다. "감시 중" 표시는 그대로 둡니다.
+async function camPolicy() {
+  const m = X && S.exams[X.id];
+  if (!X || X.done || !m || !m.cam || X.camFailed || (N && N.camSkip)) return;
+  let off = false;
+  if (APP) off = appCall('thermalStatus', 0) >= 3;
+  else if (navigator.getBattery) { try { const b = await navigator.getBattery(); off = !b.charging && b.level * 100 < (m.camBatt || 20); } catch (e) {} }
+  if (!X || X.done) return;
+  if (off && X.watch) { camStop(); X.camDown = true; if (X.guardKind === 'face') { hideGuard(); resumeTime(); } logEv('camoff'); }
+  else if (!off && !X.watch && X.camDown) camStart();
+}
 function otherWindow() {
   flushTyping(); X.done = true; clearInterval(X.tick);
   showGuard('<div class="h1">다른 창에서 시험이 열렸습니다</div><div class="txt">시험은 한 창에서만 볼 수 있습니다. 이 창은 닫아 주세요.</div>');
@@ -410,7 +502,7 @@ on('repin', () => {
     }
   }, 500);
 });
-on('nopin', () => { if (!X) return; clearInterval(X.pinPoll); logEv('nopin'); X.unpinned = false; X.away = false; $('guard').hidden = true; });
+on('nopin', () => { if (!X) return; clearInterval(X.pinPoll); logEv('nopin'); X.unpinned = false; X.away = false; hideGuard(); resumeTime(); });
 for (const ev of ['copy', 'cut', 'paste', 'contextmenu', 'dragstart', 'drop'])
   document.addEventListener(ev, e => { if (X) e.preventDefault(); });
 document.addEventListener('selectstart', e => { if (X && !e.target.closest?.('textarea,input')) e.preventDefault(); });

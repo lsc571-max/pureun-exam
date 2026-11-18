@@ -14,7 +14,11 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
 import android.view.WindowManager;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.PowerManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -55,7 +59,7 @@ public class MainActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);          // 답안 백업·로그인 유지
         s.setDatabaseEnabled(true);
-        s.setMediaPlaybackRequiresUserGesture(true);
+        s.setMediaPlaybackRequiresUserGesture(false);   // 얼굴 확인용 카메라 화면을 누르지 않아도 틀 수 있게
         s.setSupportMultipleWindows(false);
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
@@ -66,7 +70,13 @@ public class MainActivity extends Activity {
         web.setOnLongClickListener(v -> true); // 길게 눌러 복사 메뉴 막기
         web.setHapticFeedbackEnabled(false);
         web.addJavascriptInterface(new Bridge(), "PureunApp");
-        web.setWebChromeClient(new WebChromeClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            // 시험 사이트가 카메라를 요청하면(얼굴 확인) 안드로이드 권한을 받은 뒤 허락합니다.
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                ui.post(() -> handleCameraRequest(request));
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
@@ -81,6 +91,32 @@ public class MainActivity extends Activity {
             }
         });
         if (saved != null) web.restoreState(saved); else web.loadUrl(HOME);
+    }
+
+    private PermissionRequest pendingCamera;
+
+    private void handleCameraRequest(PermissionRequest request) {
+        String host = request.getOrigin() == null ? null : request.getOrigin().getHost();
+        boolean ours = host != null && (host.equals("pureun-exam.web.app") || host.equals("pureun-exam.firebaseapp.com"));
+        boolean video = false;
+        for (String r : request.getResources()) if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) video = true;
+        if (!ours || !video) { request.deny(); return; }
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+        } else {
+            if (pendingCamera != null) pendingCamera.deny();
+            pendingCamera = request;
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, 1);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code != 1 || pendingCamera == null) return;
+        PermissionRequest r = pendingCamera; pendingCamera = null;
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) r.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+        else r.deny();
     }
 
     private void showOffline() {
@@ -155,9 +191,21 @@ public class MainActivity extends Activity {
             return pinned();
         }
 
+        /** 기기 발열 단계: 0 없음 · 1 약함 · 2 보통 · 3 심함(경고) 이상. 3 이상이면 웹이 카메라를 끕니다. */
+        @JavascriptInterface
+        public int thermalStatus() {
+            if (android.os.Build.VERSION.SDK_INT < 29) return 0;
+            try {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                return pm == null ? 0 : pm.getCurrentThermalStatus();
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
         @JavascriptInterface
         public int version() {
-            return 1;
+            return 2;
         }
     }
 

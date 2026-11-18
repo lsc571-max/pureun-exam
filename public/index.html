@@ -124,6 +124,9 @@ ul.rules{padding-left:22px;font-size:17px;line-height:1.7}
 #modal,#zoom,#guard{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(23,35,29,.36);padding:18px;backdrop-filter:blur(2px)}
 #guard{z-index:60;background:rgba(18,28,23,.96)}
 #guard .h1,#guard .txt{color:#fff}
+#guard.black{background:#000}
+.bar .watch{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--pink);background:var(--pink-soft);border-radius:99px;padding:2px 10px;white-space:nowrap}
+.bar .watch i{width:7px;height:7px;border-radius:50%;background:var(--pink)}
 .sheet{width:100%;max-width:520px;max-height:90dvh;overflow:auto;background:var(--card);border-radius:22px;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 60px rgba(23,35,29,.18)}
 .sheet.wide{max-width:860px}
 .sheet h2{font-size:20px;font-weight:900}
@@ -187,6 +190,7 @@ pre.code{background:var(--bg);border:1px solid var(--line);border-radius:12px;pa
 .qrow.fixed .t b{color:var(--muted)}.qrow.fixed .t span{white-space:normal}
 /* 시험 중 띠: 어느 탭에서든 맨 위에 보입니다 */
 .desk header .band{flex:1 1 100%;display:flex;gap:6px 16px;flex-wrap:wrap;align-items:center;text-align:left;background:var(--pri-soft);color:var(--pri-d);border-radius:12px;padding:8px 14px;font-size:14px;font-weight:500}
+.band .alarm{background:var(--red);color:#fff;border-radius:99px;padding:1px 10px;font-weight:700}
 .band b{font-weight:900}.band small{opacity:.75}.band .go{margin-left:auto;font-weight:700}
 .band span{font-variant-numeric:tabular-nums}
 /* 학생 화면으로 보기 */
