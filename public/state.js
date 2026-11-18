@@ -5,6 +5,7 @@ export const S = {
   me: null,        // 학생: { sid, name, cls }
   exams: {},       // 시험 정보 목록 (정답 없음)
   classes: ['A반', 'B반'],   // 교수가 정한 반 이름
+  needCode: false,           // 입장 코드를 써야 하는지
 };
 export let be = null;                 // 서버 창구 (fb.js 또는 테스트용 mock.js)
 export const setBackend = b => { be = b; };

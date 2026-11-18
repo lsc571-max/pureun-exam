@@ -90,3 +90,25 @@ test('기기 저장 공간이 막혀 있어도 서버 저장은 된다', async (
   st.load({ q0: 1 }); st.set('q1', 2); await tick(); await tick();
   assert.deepEqual(sv.data, { q1: 2 });
 });
+
+test('제출 직전: 보내는 중인 답까지 모두 들어간 뒤에야 끝난다', async () => {
+  const sv = server(); let open; sv.gate = new Promise(r => { open = r; });
+  const st = createAnswerStore({ key: 'k', storage: memStorage(), send: sv.send });
+  st.load({});
+  st.set('q1', '쓰는 중');            // 보내는 중(막혀 있음)
+  st.set('q1', '쓰는 중 — 마지막 글자까지');
+  setTimeout(() => { sv.gate = null; open(); }, 30);
+  assert.equal(await st.drain(2000), true);
+  assert.equal(sv.data.q1, '쓰는 중 — 마지막 글자까지'); assert.equal(st.pending(), 0);
+});
+
+test('제출 직전: 연결이 끊겨 있으면 기다리다 포기하고, 답은 기기에 남는다', async () => {
+  const sv = server(), storage = memStorage();
+  const st = createAnswerStore({ key: 'k', storage, send: sv.send, timer: () => {} });
+  st.load({}); sv.online = false;
+  st.set('q1', 1);
+  assert.equal(await st.drain(300), false);
+  assert.equal(st.pending(), 1); assert.deepEqual(JSON.parse(storage.m.get('k')).a, { q1: 1 });
+  sv.online = true;
+  assert.equal(await st.drain(1000), true); assert.deepEqual(sv.data, { q1: 1 });
+});

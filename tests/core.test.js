@@ -221,6 +221,21 @@ test('고른 문항만 교체: 자리와 고유번호를 지킨다', () => {
   assert.throws(() => C.replaceSelected(PAGES, [1], fresh), /개수/);
 });
 
+test('고른 문항만 교체: 원래 사진을 지키고, 사진 자리에 엉뚱한 글자는 받지 않는다', () => {
+  const withImg = PAGES.map((p, i) => (i === 3 ? { ...p, img: 'img:abc123' } : p));
+  const back = C.normalizePage({ t: 'image', q: 'NEW', img: '(사진 있음)', opts: ['a', 'b'], a: 0, pts: 2 });   // 부탁문에 들어갔던 표시가 그대로 돌아옴
+  assert.equal(back.img, undefined);
+  assert.equal(C.replaceSelected(withImg, [3], [back])[3].img, 'img:abc123');
+  assert.equal(C.replaceSelected(withImg, [3], [{ ...back, img: 'https://example.com/x.png' }])[3].img, 'https://example.com/x.png');
+  for (const ok of ['img:q0abc1', 'data:image/jpeg;base64,AAAA', 'https://example.com/a.png']) assert.ok(C.validImg(ok));
+  for (const no of ['(사진 있음)', 'javascript:alert(1)', 'http://example.com/a.png', '']) assert.ok(!C.validImg(no));
+});
+
+test('CSV: 수식처럼 보이는 이름은 글자로 바꿔 내보낸다', () => {
+  const csv = C.toCSV([['이름', '점수'], ["=cmd|'/c calc'!A1", -3], ['+82', 5], ['@x', 0], ['홍길동', 4]]);
+  assert.ok(csv.includes("'=cmd|'/c calc'!A1,-3")); assert.ok(csv.includes("'+82,5")); assert.ok(csv.includes("'@x,0")); assert.ok(csv.includes('홍길동,4'));
+});
+
 test('영상 주소 · 시계 · CSV', () => {
   for (const u of ['https://youtu.be/dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3', 'https://youtube.com/shorts/dQw4w9WgXcQ', 'https://www.youtube.com/embed/dQw4w9WgXcQ'])
     assert.equal(C.youtubeId(u), 'dQw4w9WgXcQ');

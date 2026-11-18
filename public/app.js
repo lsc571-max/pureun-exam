@@ -24,16 +24,17 @@ const LS = { get: k => { try { return localStorage.getItem(k); } catch (e) { ret
 const within = (p, ms = 8000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('network timeout')), ms))]);
 
 /* ================= 시작 · 로그인 ================= */
-let unsubExams = null, unsubCls = null, profMod = null;
+let unsubExams = null, unsubCls = null, unsubNeed = null, profMod = null;
 async function boot() {
   try { setBackend(await (MOCK ? import('./mock.js') : import('./fb.js')).then(m => m.createBackend(CONFIG))); }
-  catch (e) { $('bootmsg').textContent = '서버에 연결하지 못했어요. 인터넷 연결을 확인하고 다시 열어 주세요.'; return; }
+  catch (e) { app.innerHTML = shell('<div class="h1">연결하지 못했어요</div><div class="txt">인터넷 연결을 확인한 뒤 다시 시도해 주세요.</div><button class="btn am" style="flex:none" data-a="reload">다시 시도</button>', true); return; }
   be.onAuth(async u => {
-    stopExam(); if (unsubExams) { unsubExams(); unsubExams = null; } if (unsubCls) { unsubCls(); unsubCls = null; }
+    stopExam(); if (unsubExams) { unsubExams(); unsubExams = null; } if (unsubCls) { unsubCls(); unsubCls = null; } if (unsubNeed) { unsubNeed(); unsubNeed = null; }
     S.user = u; S.role = ''; S.me = null;
     try {
       if (!u) { if (WANT_PROF) return viewProfLogin(); await be.signInAnon(); return; }
       unsubCls = be.on('classes', v => { S.classes = C.classList(v); if ($('e-sid')) keepEntry(); if (profMod && S.role === 'prof') profMod.onClasses(); });
+      unsubNeed = be.on('entry/need', v => { S.needCode = !!v; if ($('e-sid')) keepEntry(); });
       if (u.anon) {
         if (WANT_PROF) return viewProfLogin();
         S.role = 'student';
@@ -65,54 +66,75 @@ on('glogin', async () => { try { await be.signInGoogle(); } catch (e) { toast('�
 
 /* ================= 학생: 입장 ================= */
 let entryCls = '';
+const IN_APP_BROWSER = /KAKAOTALK|NAVER\(|Instagram|FBAN|FBAV|Line\//i.test(navigator.userAgent);
+// 안드로이드는 앱으로만 보는 시험이 열려 있으면, 인터넷 창에서는 입장하지 않게 합니다.
+// (인터넷 창에서 먼저 입장하면 그 학번이 그 창에 묶여, 앱에서 다시 입장할 수 없게 됩니다)
+const mustUseApp = () => IS_ANDROID && !APP && Object.values(S.exams).some(m => m && m.appOnly && (m.status === 'open' || m.status === 'running'));
 function viewEntry(err = '') {
   const cs = S.classes;
   if (!cs.includes(entryCls)) entryCls = cs.length === 1 ? cs[0] : '';   // 반이 하나뿐이면 고를 필요 없음
+  if (mustUseApp() || IN_APP_BROWSER) {
+    app.innerHTML = shell(`<div class="chip">푸른시험</div>${mustUseApp()
+      ? `<div class="h1">이 시험은 앱으로 봅니다</div><div class="txt">아래 버튼으로 앱을 내려받아 설치한 뒤, <b>앱에서</b> 반·학번·이름을 입력해 입장하세요.\n이 인터넷 창에서는 입장하지 마세요.</div><a class="btn am" style="flex:none;text-decoration:none" href="${APK_URL}">안드로이드 앱 내려받기</a>`
+      : '<div class="h1">다른 창에서 열어 주세요</div><div class="txt">카카오톡·네이버 같은 앱 안의 창에서는 시험을 볼 수 없습니다.\n오른쪽 위 메뉴(⋮ 또는 공유)에서 <b>다른 브라우저로 열기</b>를 눌러 크롬이나 사파리로 열어 주세요.</div>'}`, true);
+    return;
+  }
   app.innerHTML = shell(`<div class="chip">푸른시험</div>
     <div class="h1">${cs.length > 1 ? '반을 고르고 학번과 이름을 입력하세요' : '학번과 이름을 입력하세요'}</div>
     ${cs.length > 1 ? `<div class="seg">${cs.map(c => `<button data-a="cls" data-c="${esc(c)}" class="${entryCls === c ? 'on' : ''}" aria-pressed="${entryCls === c}">${esc(c)}</button>`).join('')}</div>` : `<div class="sm" style="font-size:17px;font-weight:700">${esc(cs[0])}</div>`}
     <input class="in" id="e-sid" inputmode="numeric" autocomplete="off" placeholder="학번 (예: 20261234)" maxlength="20">
     <input class="in" id="e-name" autocomplete="off" placeholder="이름" maxlength="20">
+    ${S.needCode ? '<input class="in" id="e-code" inputmode="numeric" autocomplete="off" placeholder="입장 코드 (교수님이 알려 줍니다)" maxlength="12">' : ''}
     ${err ? `<div class="box no">${esc(err)}</div>` : ''}
     <button class="btn am" style="flex:none" data-a="enter">입장</button>
     <div class="sm">학번과 이름을 정확히 입력하세요. 처음 입장한 이 기기에서만 응시할 수 있습니다.</div>
     <div style="margin-top:auto;text-align:center">${IS_ANDROID && !APP ? `<a class="link" href="${APK_URL}">안드로이드 앱 내려받기</a> · ` : ''}<a class="link" href="./?prof=1">교수용</a></div>`, true);
 }
 // 입력하던 글자를 지우지 않고 화면만 다시 그립니다
-function keepEntry(err = '') { const sid = $('e-sid') ? $('e-sid').value : '', nm = $('e-name') ? $('e-name').value : ''; viewEntry(err); $('e-sid').value = sid; $('e-name').value = nm; }
+function keepEntry(err = '') {
+  const v = id => ($(id) ? $(id).value : ''), sid = v('e-sid'), nm = v('e-name'), code = v('e-code');
+  viewEntry(err);
+  if ($('e-sid')) { $('e-sid').value = sid; $('e-name').value = nm; if ($('e-code')) $('e-code').value = code; }
+}
 on('cls', el => { entryCls = el.dataset.c; keepEntry(); });
 on('enter', async () => {
-  const sid = C.normSid($('e-sid').value), name = C.normName($('e-name').value), cls = entryCls;
-  const again = m => { viewEntry(m); $('e-sid').value = sid; $('e-name').value = name; };
+  const sid = C.normSid($('e-sid').value), name = C.normName($('e-name').value), cls = entryCls, code = $('e-code') ? $('e-code').value.trim() : '';
+  const again = m => { keepEntry(m); $('e-sid').value = sid; $('e-name').value = name; };
   if (!cls) return again('반을 먼저 골라 주세요.');
   if (!C.validSid(sid)) return again('학번을 정확히 입력해 주세요.');
   if (!name) return again('이름을 입력해 주세요.');
+  if (S.needCode && !code) return again('입장 코드를 입력해 주세요. 교수님이 알려 줍니다.');
+  const rec = { sid, name, cls, at: be.now() }; if (code) rec.code = code;
   try {
-    await be.update('', { ['users/' + S.user.uid]: { sid, name, cls, at: be.now() }, ['bind/' + sid]: S.user.uid });
+    await within(be.update('', { ['users/' + S.user.uid]: rec, ['bind/' + sid]: S.user.uid }), 15000);
     S.me = { sid, name, cls }; viewHome();
   } catch (e) {
-    again(/PERMISSION/i.test(String(e.code || e.message)) ? '입장하지 못했어요. 이 학번으로 이미 다른 기기에서 입장했거나, 반·학번·이름이 명단과 다릅니다. 교수님께 말씀해 주세요.' : errText(e));
+    again(/PERMISSION/i.test(String(e.code || e.message)) ? `입장하지 못했어요. ${S.needCode ? '입장 코드가 틀렸거나, ' : ''}이 학번으로 이미 다른 기기에서 입장했습니다. 교수님께 말씀해 주세요.` : errText(e));
   }
 });
 
 /* ================= 학생: 시험 목록 ================= */
 let view = '';   // 'home' | 'notice' | 'exam' | 'done' | 'review'
 function onExams() {
-  if (!S.me) return;
+  if (!S.me) { if ($('e-sid') || mustUseApp()) keepEntry(); return; }
   if (view === '' || view === 'home') viewHome();
   else if (view === 'notice') viewNotice();
   else if (view === 'exam') examMetaChanged();
   else if (view === 'done') viewDone();
 }
+// 시간이 지났으면 교수가 "종료"를 누르기 전이라도 끝난 시험으로 봅니다
+const isOver = m => m.status === 'ended' || (m.status === 'running' && be.now() >= m.endAt);
+const pracOpen = m => !!m.practice && (m.status === 'draft' || m.status === 'ended');
 function viewHome() {
   view = 'home';
-  const list = Object.entries(S.exams).filter(([, m]) => m && (m.status !== 'draft' || m.practice)).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+  const list = Object.entries(S.exams).filter(([, m]) => m && (m.status !== 'draft' || pracOpen(m))).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
   const card = ([id, m]) => {
     const exam = m.status !== 'draft';
-    const st = { open: ['wait', '곧 시작'], running: ['run', '진행 중'], ended: ['end', m.released ? '결과 공개' : '종료'] }[m.status] || ['', '문제풀이'];
-    const hint = m.status === 'open' ? '눌러서 대기실에 들어가세요' : m.status === 'running' ? '눌러서 응시하세요' : m.status === 'ended' ? (m.released ? '눌러서 내 점수와 해설을 보세요' : '결과는 교수님이 공개하면 볼 수 있어요') : '';
+    const over = isOver(m);
+    const st = over ? ['end', m.released ? '결과 공개' : '종료'] : ({ open: ['wait', '곧 시작'], running: ['run', '진행 중'] }[m.status] || ['', '문제풀이']);
+    const hint = m.status === 'open' ? '눌러서 대기실에 들어가세요' : !over && m.status === 'running' ? '눌러서 응시하세요' : over ? (m.released ? '눌러서 내 점수와 해설을 보세요' : '결과는 교수님이 공개하면 볼 수 있어요') : '';
     return `${exam ? `<button class="card" data-a="open-exam" data-id="${esc(id)}"><span class="st ${st[0]}">${st[1]}</span><h3>${esc(m.title || '시험')}</h3><div class="sm">${m.n || 0}문항 · ${m.minutes || 0}분 · ${hint}</div></button>` : ''}
-      ${m.practice ? `<button class="card" data-a="open-practice" data-id="${esc(id)}"><span class="st">문제풀이</span><h3>${esc(m.title || '문제풀이')}</h3><div class="sm">${m.n || 0}문항 · 순서대로 풀고 해설을 바로 확인</div></button>` : ''}`;
+      ${pracOpen(m) ? `<button class="card" data-a="open-practice" data-id="${esc(id)}"><span class="st">문제풀이</span><h3>${esc(m.title || '문제풀이')}</h3><div class="sm">${m.n || 0}문항 · 순서대로 풀고 해설을 바로 확인</div></button>` : ''}`;
   };
   app.innerHTML = `<div class="phone"><div class="bar"><span>푸른시험</span><span class="who">${esc(who())}</span></div>
     <div class="body tint">${list.length ? list.map(card).join('') : '<div class="box info">지금 열려 있는 시험이 없어요. 교수님이 시험을 열면 여기에 나타납니다.</div>'}</div></div>`;
@@ -126,8 +148,8 @@ on('open-exam', async el => {
   const my = (await be.get(`answers/${id}/${S.me.sid}`)) || {};
   N = { id, checked: false, my };
   if (my.submittedAt) return viewDone();
-  if (m.status === 'ended') return m.released ? openReview(id, 'result') : viewDone();
-  if (m.status === 'running' && my.startedAt && be.now() < m.endAt) return startExam();
+  if (isOver(m)) return m.released ? openReview(id, 'result') : viewDone();
+  if (m.status === 'running' && my.startedAt) return startExam();
   viewNotice();
 });
 const APK_URL = 'https://github.com/lsc571-max/pureun-exam/releases/latest/download/pureun-exam.apk';
@@ -139,8 +161,8 @@ function viewNotice() {
   view = 'notice';
   const m = S.exams[N.id];
   if (!m || m.status === 'draft') return viewHome();
-  if (m.status === 'ended') return viewDone();
-  const running = m.status === 'running' && be.now() < m.endAt;
+  if (isOver(m)) return viewDone();
+  const running = m.status === 'running';
   const needApp = !!m.appOnly && IS_ANDROID && !APP;   // 안드로이드는 앱으로만 응시
   const ready = running && N.checked && dndOn() && !needApp;
   const nt = m.notice || {};
@@ -179,34 +201,43 @@ on('start', () => startExam());
 
 /* ================= 학생: 시험 보기 ================= */
 let X = null;   // 지금 보고 있는 시험
-const ansPath = () => `answers/${X.id}/${S.me.sid}`;
+const ansPath = () => X.path;
+let wake = null;
+// 웹에서는 화면이 저절로 꺼지면 "이탈"로 기록되므로, 시험 중에는 화면이 꺼지지 않게 합니다 (앱은 앱이 처리)
+async function keepAwake() { try { if (!APP && X && !X.done && navigator.wakeLock && !document.hidden) wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
 async function startExam() {
-  const id = N.id, m = S.exams[id];
+  const id = N.id, path = `answers/${id}/${S.me.sid}`;
   try {
-    const [sheetRec, imgs, my] = await within(Promise.all([be.get('sheets/' + id), be.get('images/' + id), be.get(`answers/${id}/${S.me.sid}`)]), 15000);
+    const mine = (await within(be.get(path), 15000)) || {};
+    if (mine.submittedAt) { N.my = mine; return viewDone(); }
+    // 시작 기록을 먼저 남깁니다. 시작한 학생만 문제지를 받을 수 있습니다.
+    const sess = Math.random().toString(36).slice(2, 12);
+    const first = { sess, dev: (APP ? 'app ' : 'web ') + navigator.userAgent.slice(0, 200) };
+    if (!mine.startedAt) first.startedAt = be.now();
+    await within(be.update(path, first));
+    const [sheetRec, imgs] = await within(Promise.all([be.get('sheets/' + id), be.get('images/' + id)]), 25000);
     const sheet = C.fixSheet(parse(sheetRec, []));
     if (!sheet.length) return toast('문제를 불러오지 못했어요.');
-    const mine = my || {};
-    if (mine.submittedAt) { N.my = mine; return viewDone(); }
     X = {
-      id, sheet, byId: Object.fromEntries(sheet.map(q => [q.id, q])), imgs: imgs || {},
+      id, path, sheet, byId: Object.fromEntries(sheet.map(q => [q.id, q])), imgs: imgs || {},
       order: C.examOrder(sheet, id, S.me.sid), idx: Math.max(0, +(sessionStorage.getItem('idx:' + id) || 0)),
-      sess: Math.random().toString(36).slice(2, 12), leaves: C.leaveSummary(mine.ev).count, away: false, unsubs: [], done: false, typing: 0,
+      sess, leaves: C.leaveSummary(mine.ev).count, away: false, unsubs: [], done: false, typing: 0,
     };
     X.idx = Math.min(X.idx, X.order.length - 1);
     X.store = createAnswerStore({
       key: `ans:${id}:${S.me.sid}`, storage: localStorage,
-      send: patch => be.update(ansPath(), Object.fromEntries(Object.entries(patch).map(([k, v]) => ['a/' + k, v]))),
+      send: patch => be.update(path, Object.fromEntries(Object.entries(patch).map(([k, v]) => ['a/' + k, v]))),   // 시험 화면이 닫힌 뒤에도 같은 자리로 다시 보냅니다
       onStatus: paintSave,
     });
     X.store.load(mine.a || {});
-    await within(be.update(ansPath(), { startedAt: mine.startedAt || be.now(), sess: X.sess, dev: (APP ? 'app ' : 'web ') + navigator.userAgent.slice(0, 200) }));
-    X.unsubs.push(be.on(ansPath() + '/sess', v => { if (X && !X.done && v && v !== X.sess) otherWindow(); }));
-    X.unsubs.push(be.on(ansPath() + '/submittedAt', v => { if (X && !X.done && v) finish(true); }));
+    X.unsubs.push(be.on(path + '/sess', v => { if (X && !X.done && v && v !== X.sess) otherWindow(); }));
+    X.unsubs.push(be.on(path + '/submittedAt', v => { if (X && !X.done && v) finish(true); }));
     X.unsubs.push(be.onConnected(c => { if (X) { X.conn = c; paintSave(); } }));
     X.tick = setInterval(tick, 500);
     app.classList.add('lock');
     try { if (APP && APP.startLock) APP.startLock(); } catch (e) {}
+    try { history.pushState({ exam: 1 }, ''); } catch (e) {}   // 뒤로 가기로 시험 화면을 벗어나지 않게
+    keepAwake();
     view = 'exam'; renderExam(); tick();
   } catch (e) {
     console.error(e); X = null;
@@ -215,11 +246,14 @@ async function startExam() {
 }
 function stopExam() {
   if (!X) return;
-  clearInterval(X.tick); X.unsubs.forEach(u => { try { u(); } catch (e) {} });
+  clearInterval(X.tick); clearInterval(X.pinPoll); X.unsubs.forEach(u => { try { u(); } catch (e) {} });
   app.classList.remove('lock'); $('guard').hidden = true; closeZoom(); closeModal();
   try { if (APP && APP.stopLock) APP.stopLock(); } catch (e) {}
+  try { if (wake) wake.release(); } catch (e) {} wake = null;
   X = null;
 }
+// 뒤로 가기: 시험 중에는 화면을 벗어나지 않고, 열려 있는 창만 닫습니다
+window.addEventListener('popstate', () => { if (X && !X.done) { try { history.pushState({ exam: 1 }, ''); } catch (e) {} closeZoom(); if (!$('modal').hidden) closeModal(); } });
 function examMetaChanged() { if (X && !X.done) tick(); }
 function tick() {
   if (!X || X.done) return;
@@ -314,13 +348,32 @@ on('submit', async () => {
 async function finish(auto) {
   if (!X || X.done) return;
   X.done = true; flushTyping();
-  const id = X.id, store = X.store;
+  const { id, path, store } = X;
+  // 1) 남은 답을 모두 서버에 넣고  2) 그다음에 제출 표시를 합니다. (제출 표시가 먼저 들어가면 뒤따르는 답이 거절됩니다)
+  const drained = await store.drain(auto ? 7000 : 8000);
   let sent = false;
-  try { await within(Promise.all([store.flush(), be.update(ansPath(), { submittedAt: be.now() })])); sent = true; } catch (e) { sent = false; }
-  if (!sent && !auto) { X.done = false; return toast('제출하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.', 4000); }
-  if (sent || !store.pending()) store.close();
-  N = { id, my: { submittedAt: sent ? be.now() : 0, a: store.all() }, auto, unsent: !sent && store.pending() > 0 };
+  if (drained) {
+    try { await within(be.update(path, { submittedAt: be.now() }), 8000); sent = true; }
+    catch (e) { try { sent = !!(await within(be.get(path + '/submittedAt'), 4000)); } catch (e2) { sent = false; } }   // 이미 제출 처리돼 있으면 성공으로 봅니다
+  }
+  if (!X) return;
+  if (!sent && !auto) { X.done = false; return toast(drained ? '제출하지 못했어요. 잠시 뒤 다시 눌러 주세요.' : '인터넷 연결이 끊겨 제출하지 못했어요. 답은 이 기기에 저장되어 있습니다. 연결을 확인하고 다시 눌러 주세요.', 5000); }
+  if (!store.pending()) store.close();
+  N = { id, my: { submittedAt: sent ? be.now() : 0, a: store.all() }, auto, unsent: store.pending() > 0 };
   stopExam(); viewDone();
+  if (store.pending()) lateSend(store, path, id);
+}
+// 시간이 끝났는데 못 보낸 답이 있으면, 연결되는 대로 다시 보냅니다 (서버가 받아 주는 여유 시간 안에서)
+async function lateSend(store, path, id) {
+  for (let i = 0; i < 20 && store.pending(); i++) {
+    if (await store.drain(2500)) {
+      try { await within(be.update(path, { submittedAt: be.now() }), 5000); } catch (e) {}
+      store.close();
+      if (view === 'done' && N && N.id === id) { N.unsent = false; N.my.a = store.all(); try { N.my.submittedAt = (await be.get(path + '/submittedAt')) || 0; } catch (e) {} viewDone(); }
+      return;
+    }
+    await new Promise(r => setTimeout(r, 3000));
+  }
 }
 
 /* ---------- 부정행위 방지: 이탈 기록 · 복사 차단 ---------- */
@@ -334,11 +387,11 @@ function cameBack() {
 function showGuard(html) { const g = $('guard'); g.innerHTML = `<div style="max-width:420px;display:flex;flex-direction:column;gap:16px;text-align:center">${html}</div>`; g.hidden = false; }
 on('guard-ok', () => { $('guard').hidden = true; });
 function otherWindow() {
-  X.done = true; clearInterval(X.tick);
+  flushTyping(); X.done = true; clearInterval(X.tick);
   showGuard('<div class="h1">다른 창에서 시험이 열렸습니다</div><div class="txt">시험은 한 창에서만 볼 수 있습니다. 이 창은 닫아 주세요.</div>');
 }
-document.addEventListener('visibilitychange', () => (document.hidden ? wentAway('leave') : cameBack()));
-window.addEventListener('pagehide', () => wentAway('leave'));
+document.addEventListener('visibilitychange', () => { if (document.hidden) { flushTyping(); wentAway('leave'); } else { cameBack(); keepAwake(); } });
+window.addEventListener('pagehide', () => { flushTyping(); wentAway('leave'); });
 // 창이 포커스를 잃음 = 다른 창으로 감. 영상(IFRAME)이나 드롭다운(SELECT)을 누른 것은 이탈이 아닙니다.
 // 앱 안에서는 앱이 직접 알려 주므로 쓰지 않습니다(드롭다운 창이 뜰 때 잘못 기록되는 것을 막음).
 if (!APP) {
@@ -357,7 +410,20 @@ window.onPureunEvent = t => {
   }
   wentAway('leave');
 };
-on('repin', () => { try { APP.startLock(); } catch (e) {} });
+on('repin', () => {
+  try { APP.startLock(); } catch (e) {}
+  if (!X) return;
+  // 앱이 "다시 고정됨"을 알려 주지 못해도 스스로 확인해서 가림을 풉니다
+  clearInterval(X.pinPoll); let n = 0;
+  X.pinPoll = setInterval(() => {
+    if (!X || !X.unpinned) return clearInterval(X && X.pinPoll);
+    if (appCall('isPinned', false)) { clearInterval(X.pinPoll); window.onPureunEvent('pinned'); }
+    else if (++n === 30 && !$('nopin')) {   // 15초가 지나도 고정이 안 되는 기기: 기록을 남기고 계속할 수 있게
+      $('guard').firstElementChild.insertAdjacentHTML('beforeend', '<button class="btn gh" style="flex:none" id="nopin" data-a="nopin">고정이 안 돼요 — 고정 없이 계속 (기록됨)</button>');
+    }
+  }, 500);
+});
+on('nopin', () => { if (!X) return; clearInterval(X.pinPoll); logEv('nopin'); X.unpinned = false; X.away = false; $('guard').hidden = true; });
 for (const ev of ['copy', 'cut', 'paste', 'contextmenu', 'dragstart', 'drop'])
   document.addEventListener(ev, e => { if (X) e.preventDefault(); });
 document.addEventListener('selectstart', e => { if (X && !e.target.closest?.('textarea,input')) e.preventDefault(); });

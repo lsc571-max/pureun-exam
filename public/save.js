@@ -50,6 +50,12 @@ export function createAnswerStore({ key, storage, send, onStatus = () => {}, ret
       flush();
     },
     flush,
+    // 남은 답이 모두 서버에 들어갈 때까지 기다립니다 (최대 ms). 다 들어갔으면 true.
+    async drain(ms = 6000, sleep = t => new Promise(r => setTimeout(r, t))) {
+      const until = Date.now() + ms;
+      while (Object.keys(dirty).length && Date.now() < until) { await flush(); if (Object.keys(dirty).length) await sleep(120); }
+      return !Object.keys(dirty).length;
+    },
     pending: () => Object.keys(dirty).length,
     status: () => status,
     // 제출 뒤에는 더 보내지 않습니다. 기기 백업도 지웁니다.

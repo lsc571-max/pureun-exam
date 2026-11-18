@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 시험 시작 때 방해 금지를 켜고, 끝나면 원래대로 되돌리는 데 씁니다 -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- 시험 화면 위에 다른 앱의 떠 있는 창이 보이지 않게 합니다 -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
 
     <application
         android:allowBackup="false"

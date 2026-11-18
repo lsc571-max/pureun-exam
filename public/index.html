@@ -44,6 +44,8 @@ button:disabled{cursor:not-allowed}
 .bar button{font-weight:700;padding:5px 11px;border-radius:9px;background:var(--soft);font-size:13px;flex:none}
 .prog{flex:none;height:4px;background:var(--soft)}.prog i{display:block;height:100%;background:var(--pri);border-radius:0 4px 4px 0;transition:width .25s}
 .body{flex:1;min-height:0;overflow:hidden auto;padding:20px 18px 14px;display:flex;flex-direction:column;gap:14px;overscroll-behavior:contain}
+/* 내용이 길면 줄어들지 않고 쪽 안에서 스크롤됩니다 (보기 글자가 겹치는 것 방지) */
+.body>*{flex-shrink:0}
 .body.center{justify-content:center}
 .body.tint{background:var(--bg)}
 .foot{flex:none;display:flex;gap:8px;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);background:var(--card)}
@@ -55,6 +57,7 @@ button:disabled{cursor:not-allowed}
 .opt{display:flex;gap:11px;align-items:flex-start;width:100%;text-align:left;border:1.5px solid var(--line);border-radius:15px;padding:13px 14px;
   font-size:clamp(17px,4.6vw,19px);line-height:1.42;background:var(--card);min-height:54px;transition:background .12s,border-color .12s}
 .opt .n{flex:none;width:1.7em;height:1.7em;border-radius:50%;background:var(--soft);display:flex;align-items:center;justify-content:center;font-size:.78em;font-weight:700;color:var(--muted)}
+.opt>span:nth-child(2){min-width:0;overflow-wrap:anywhere}
 .opt.sq .n{border-radius:7px}
 .opt.on{border-color:var(--blue);background:var(--blue-soft)}
 .opt.on .n{background:var(--blue);color:#fff}
@@ -72,7 +75,7 @@ button:disabled{cursor:not-allowed}
 .in:disabled{background:var(--soft);color:var(--muted)}
 textarea.in{resize:none;line-height:1.55}
 select.in{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236b7a73' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:38px}
-.ta{flex:1;min-height:150px}
+.ta{flex:1 0 auto;min-height:150px}
 .pic{flex:none;border-radius:16px;overflow:hidden;background:var(--soft);cursor:zoom-in;max-height:38vh;display:flex;justify-content:center}
 .pic img{max-width:100%;max-height:38vh;object-fit:contain;display:block;pointer-events:none}
 .vid{flex:none;border-radius:16px;overflow:hidden;background:#111;aspect-ratio:16/9}

@@ -11,6 +11,17 @@
       ".read": "auth != null",
       ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
     },
+    "classes": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
+    },
+    "entry": {
+      ".read": "auth != null && root.child('admins').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
+      "need": {
+        ".read": "auth != null"
+      }
+    },
     "drafts": {
       ".read": "auth != null && root.child('admins').child(auth.uid).val() === true",
       ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
@@ -18,30 +29,26 @@
     "sheets": {
       ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
       "$exam": {
-        ".read": "(auth != null && root.child('admins').child(auth.uid).val() === true) || (auth != null && root.child('users').child(auth.uid).exists() && (root.child('exams').child($exam).child('status').val() === 'running' || root.child('exams').child($exam).child('status').val() === 'ended' || root.child('exams').child($exam).child('practice').val() === true))"
+        ".read": "(auth != null && root.child('admins').child(auth.uid).val() === true) || (auth != null && root.child('users').child(auth.uid).exists() && (((root.child('exams').child($exam).child('status').val() === 'running' || root.child('exams').child($exam).child('status').val() === 'ended') && root.child('answers').child($exam).child(root.child('users').child(auth.uid).child('sid').val()).child('startedAt').exists()) || (root.child('exams').child($exam).child('practice').val() === true && (root.child('exams').child($exam).child('status').val() === 'draft' || root.child('exams').child($exam).child('status').val() === 'ended'))))"
       }
     },
     "images": {
       ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
       "$exam": {
-        ".read": "(auth != null && root.child('admins').child(auth.uid).val() === true) || (auth != null && root.child('users').child(auth.uid).exists() && (root.child('exams').child($exam).child('status').val() === 'running' || root.child('exams').child($exam).child('status').val() === 'ended' || root.child('exams').child($exam).child('practice').val() === true))"
+        ".read": "(auth != null && root.child('admins').child(auth.uid).val() === true) || (auth != null && root.child('users').child(auth.uid).exists() && (((root.child('exams').child($exam).child('status').val() === 'running' || root.child('exams').child($exam).child('status').val() === 'ended') && root.child('answers').child($exam).child(root.child('users').child(auth.uid).child('sid').val()).child('startedAt').exists()) || (root.child('exams').child($exam).child('practice').val() === true && (root.child('exams').child($exam).child('status').val() === 'draft' || root.child('exams').child($exam).child('status').val() === 'ended'))))"
       }
     },
     "keys": {
       ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
       "$exam": {
-        ".read": "(auth != null && root.child('admins').child(auth.uid).val() === true) || (auth != null && root.child('users').child(auth.uid).exists() && (root.child('exams').child($exam).child('released').val() === true || root.child('exams').child($exam).child('practice').val() === true))"
+        ".read": "(auth != null && root.child('admins').child(auth.uid).val() === true) || (auth != null && root.child('users').child(auth.uid).exists() && (root.child('exams').child($exam).child('released').val() === true || (root.child('exams').child($exam).child('practice').val() === true && (root.child('exams').child($exam).child('status').val() === 'draft' || root.child('exams').child($exam).child('status').val() === 'ended'))))"
       }
-    },
-    "roster": {
-      ".read": "auth != null && root.child('admins').child(auth.uid).val() === true",
-      ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
     },
     "bind": {
       ".read": "auth != null && root.child('admins').child(auth.uid).val() === true",
       ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
       "$sid": {
-        ".write": "auth != null && !data.exists() && newData.val() === auth.uid && (root.child('roster').child($sid).exists() || !root.child('roster').exists()) && newData.parent().parent().child('users').child(auth.uid).child('sid').val() === $sid"
+        ".write": "auth != null && !data.exists() && newData.val() === auth.uid && newData.parent().parent().child('users').child(auth.uid).child('sid').val() === $sid"
       }
     },
     "users": {
@@ -49,9 +56,15 @@
       ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.child('sid').isString() && newData.child('name').isString() && newData.child('cls').isString() && newData.child('sid').val().matches(/^[A-Z0-9-]{4,20}$/) && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 20 && newData.child('cls').val().length >= 1 && newData.child('cls').val().length <= 20 && (!root.child('classes').exists() || root.child('classes').child(newData.child('cls').val()).exists()) && (!root.child('roster').exists() || (root.child('roster').child(newData.child('sid').val()).child('name').val() === newData.child('name').val() && root.child('roster').child(newData.child('sid').val()).child('cls').val() === newData.child('cls').val())) && newData.parent().parent().child('bind').child(newData.child('sid').val()).val() === auth.uid",
+        ".write": "auth != null && auth.uid === $uid && !data.exists() && newData.child('sid').isString() && newData.child('name').isString() && newData.child('cls').isString() && newData.child('sid').val().matches(/^[A-Z0-9-]{4,20}$/) && newData.child('name').val().length >= 1 && newData.child('name').val().length <= 20 && newData.child('cls').val().length >= 1 && newData.child('cls').val().length <= 20 && (!root.child('classes').exists() || root.child('classes').child(newData.child('cls').val()).exists()) && (!root.child('entry').child('code').exists() || newData.child('code').val() === root.child('entry').child('code').val()) && newData.parent().parent().child('bind').child(newData.child('sid').val()).val() === auth.uid",
+        "at": {
+          ".validate": "newData.isNumber()"
+        },
+        "code": {
+          ".validate": "newData.isString() && newData.val().length <= 12"
+        },
         "$other": {
-          ".validate": "$other === 'sid' || $other === 'name' || $other === 'cls' || $other === 'at'"
+          ".validate": "$other === 'sid' || $other === 'name' || $other === 'cls'"
         }
       }
     },
@@ -61,27 +74,41 @@
       "$exam": {
         "$sid": {
           ".read": "auth != null && root.child('bind').child($sid).val() === auth.uid",
-          ".write": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('status').val() === 'running' && now < root.child('exams').child($exam).child('endAt').val() + 20000 && !data.child('submittedAt').exists()",
           "a": {
             "$q": {
-              ".validate": "newData.isNumber() || (newData.isString() && newData.val().length <= 5000)"
+              ".write": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('status').val() === 'running' && now < root.child('exams').child($exam).child('endAt').val() + 20000 && !root.child('answers').child($exam).child($sid).child('submittedAt').exists()",
+              ".validate": "$q.matches(/^[A-Za-z0-9_-]{1,24}$/) && (newData.isNumber() || (newData.isString() && newData.val().length <= 5000))"
             }
           },
           "ev": {
             "$e": {
-              ".validate": "newData.child('t').isString() && newData.child('t').val().length <= 20 && newData.child('at').isNumber()"
+              ".write": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('status').val() === 'running' && now < root.child('exams').child($exam).child('endAt').val() + 20000 && !root.child('answers').child($exam).child($sid).child('submittedAt').exists() && !data.exists()",
+              ".validate": "newData.hasChildren(['t', 'at'])",
+              "t": {
+                ".validate": "newData.isString() && newData.val().length <= 20"
+              },
+              "at": {
+                ".validate": "newData.isNumber() && newData.val() > now - 600000 && newData.val() < now + 600000"
+              },
+              "$o": {
+                ".validate": false
+              }
             }
           },
           "startedAt": {
-            ".validate": "newData.isNumber()"
+            ".write": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('status').val() === 'running' && now < root.child('exams').child($exam).child('endAt').val() + 20000 && !root.child('answers').child($exam).child($sid).child('submittedAt').exists() && !data.exists()",
+            ".validate": "newData.isNumber() && newData.val() > now - 600000 && newData.val() < now + 600000"
           },
           "submittedAt": {
-            ".validate": "newData.isNumber()"
+            ".write": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('status').val() === 'running' && now < root.child('exams').child($exam).child('endAt').val() + 20000 && !root.child('answers').child($exam).child($sid).child('submittedAt').exists()",
+            ".validate": "newData.isNumber() && newData.val() > now - 600000 && newData.val() < now + 600000"
           },
           "sess": {
+            ".write": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('status').val() === 'running' && now < root.child('exams').child($exam).child('endAt').val() + 20000 && !root.child('answers').child($exam).child($sid).child('submittedAt').exists()",
             ".validate": "newData.isString() && newData.val().length <= 40"
           },
           "dev": {
+            ".write": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('status').val() === 'running' && now < root.child('exams').child($exam).child('endAt').val() + 20000 && !root.child('answers').child($exam).child($sid).child('submittedAt').exists()",
             ".validate": "newData.isString() && newData.val().length <= 300"
           },
           "$other": {
@@ -98,10 +125,6 @@
           ".read": "auth != null && root.child('bind').child($sid).val() === auth.uid && root.child('exams').child($exam).child('released').val() === true"
         }
       }
-    },
-    "classes": {
-      ".read": "auth != null",
-      ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
     }
   }
 }

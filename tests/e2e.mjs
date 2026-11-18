@@ -36,7 +36,7 @@ const QS = ['첫째 문제', '둘째 문제', '셋째 문제', '넷째 문제', 
 
 let step = '';
 // 어디선가 멈추면 끝없이 기다리지 않고 실패로 끝냅니다
-const watchdog = setTimeout(() => { console.error(`\n시간 초과 — 멈춘 단계: ${step}`); process.exit(1); }, 170000);
+const watchdog = setTimeout(() => { console.error(`\n시간 초과 — 멈춘 단계: ${step}`); process.exit(1); }, 230000);
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 412, height: 860 } });
 const errors = [];
@@ -228,14 +228,14 @@ try {
   // (다른 브라우저 창이라 가짜 서버 자료를 따로 넣어 줍니다)
   const dp = await droid.newPage(); await dp.goto(BASE + '/?mock=1');
   await dp.evaluate(v => localStorage.setItem('mockdb', v), JSON.stringify({ exams: { x1: { title: '앱 전용', minutes: 5, status: 'running', startAt: Date.now(), endAt: Date.now() + 300000, appOnly: true, n: 1 } } }));
-  await dp.reload(); await dp.waitForSelector('#e-sid');
+  await dp.reload(); await dp.waitForFunction(() => /이 시험은 앱으로 봅니다/.test(document.body.textContent));
   assert.match(await dp.textContent('#app'), /안드로이드 앱 내려받기/);
-  await act(dp, 'cls', '[data-c="A반"]'); await dp.fill('#e-sid', '20260001'); await dp.fill('#e-name', '테스트'); await act(dp, 'enter');
-  await dp.waitForSelector('[data-a="open-exam"]'); await act(dp, 'open-exam');
-  await dp.waitForSelector('[data-a="agree"]'); await act(dp, 'agree');
-  assert.ok(await dp.isDisabled('[data-a="start"]'), '앱 전용 시험인데 안드로이드 웹에서 시작이 됨');
-  assert.match(await dp.textContent('#app'), /앱으로만 볼 수 있습니다/);
+  assert.equal(await dp.locator('#e-sid').count(), 0, '앱 전용 시험인데 인터넷 창에서 입장 칸이 보임');   // 여기서 입장하면 학번이 이 창에 묶여 버림
   await droid.close();
+  const kakao = await browser.newContext({ viewport: { width: 412, height: 860 }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 KAKAOTALK 10.9.5' });
+  const kp = await kakao.newPage(); await kp.goto(BASE + '/?mock=1');
+  await kp.waitForFunction(() => /다른 창에서 열어 주세요/.test(document.body.textContent));   // 카카오톡 안의 창에서는 입장하지 않게
+  await kakao.close();
   await act(prof, 'ex-settings'); await prof.click('#s-app'); await act(prof, 's-save');   // 나머지 테스트는 웹으로 진행
   await prof.waitForFunction(() => document.getElementById('modal').hidden);
 
@@ -250,6 +250,26 @@ try {
   await act(stu, 'cls', '[data-c="A반"]'); await stu.fill('#e-sid', ' 2026 1234 '); await stu.fill('#e-name', '홍 길동'); await act(stu, 'enter');
   await stu.waitForSelector('[data-a="open-exam"]');
   assert.match(await stu.textContent('.who'), /A반 20261234 홍길동/);
+
+  say('입장 코드: 켜면 코드를 아는 학생만 들어온다');
+  await act(prof, 'p-back'); await act(prof, 'people');
+  await prof.fill('#code-in', '4821'); await act(prof, 'code-save');
+  await prof.waitForFunction(() => /켜짐/.test(document.getElementById('codeBox').textContent));
+  const coded = await ctx.newPage(); watch(coded, '코드 학생');
+  await coded.goto(BASE + '/?mock=1'); await coded.waitForSelector('#e-code');
+  await act(coded, 'cls', '[data-c="A반"]'); await coded.fill('#e-sid', '20261777'); await coded.fill('#e-name', '코드학생');
+  await act(coded, 'enter'); await coded.waitForSelector('.box.no');                       // 코드를 안 씀
+  await coded.fill('#e-code', '0000'); await act(coded, 'enter');
+  await coded.waitForFunction(() => /입장 코드가 틀렸거나/.test(document.body.textContent));
+  await coded.fill('#e-code', '4821'); await act(coded, 'enter');
+  await coded.waitForSelector('[data-a="open-exam"]');
+  await coded.close();
+  await act(prof, 'code-off');
+  await prof.waitForFunction(() => /꺼짐/.test(document.getElementById('codeBox').textContent));
+  await prof.click('#peopleBox tr:has-text("코드학생") [data-a="unbind"]'); await act(prof, 'dlg-yes');   // 나머지 테스트에 영향이 없게 입장 취소
+  await prof.waitForFunction(() => !/코드학생/.test(document.getElementById('peopleBox').textContent));
+  await act(prof, 'modal-close'); await act(prof, 'p-open');
+  await prof.waitForSelector('[data-a="ex-start"]');
 
   say('두 번째 기기는 같은 학번으로 못 들어온다');
   const stu2 = await ctx.newPage(); watch(stu2, '학생2');
@@ -362,10 +382,10 @@ try {
   assert.equal(Object.keys(d.answers[exId]['20261301'].a).length, 1);
 
   /* ---------- 교수: 종료, 채점, 결과 ---------- */
-  say('시험 종료');
+  say('시간이 끝나면 교수 화면이 시험을 저절로 닫는다');
   await prof.waitForFunction(() => /제출 \d\d:/.test(document.getElementById('pmain').textContent));
-  await act(prof, 'ex-end'); await act(prof, 'dlg-yes');
-  await prof.waitForSelector('[data-a="ex-release"]');
+  await prof.waitForSelector('[data-a="ex-release"]', { timeout: 20000 });
+  assert.equal((await db(prof)).exams[exId].status, 'ended');
 
   say('단답형: 학생이 쓴 답을 모아 보고 정답으로 인정한다');
   await act(prof, 'p-tab', '[data-t="grade"]');
@@ -450,9 +470,12 @@ try {
   await stu.reload(); await stu.waitForSelector('[data-a="open-exam"]'); await act(stu, 'open-exam');
   await stu.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent)); // 제출한 학생은 다시 못 풂
   await act(prof, 'ex-end'); await act(prof, 'dlg-yes'); await prof.waitForSelector('[data-a="ex-release"]');
-  await late.waitForFunction(() => /시험이 끝났습니다/.test(document.body.textContent));
+  // "시험 종료"를 누르면 남은 시간이 0이 되어, 응시 중이던 학생의 답안이 자동 제출된 뒤 시험이 닫힙니다
+  await late.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent), null, { timeout: 15000 });
+  assert.ok((await db(prof)).answers[exId]['20261302'].submittedAt > 0, '교수가 종료했을 때 응시 중이던 학생이 제출 처리되지 않음');
   assert.ok((await late.evaluate(() => window.__app.calls)).includes('stopLock'), '시험이 끝났는데 화면 고정·방해 금지를 풀지 않음');
   await late.close();
+  await prof.waitForSelector('[data-a="ex-release"]', { timeout: 20000 });
   await act(prof, 'p-tab', '[data-t="result"]'); await prof.waitForSelector('[data-a="csv"]');
 
   say('결과 공개 → 학생이 점수와 해설을 본다');

@@ -52,6 +52,8 @@ export function parseBundle(text) {
 
 const str = v => (v == null ? '' : String(v)).trim();
 export const newId = (rand = Math.random) => 'q' + Math.floor(rand() * 2176782336).toString(36).padStart(6, '0');
+// 사진 값은 올린 사진(img:번호), 사진 자료(data:), 인터넷 주소(https://)만 받습니다. "(사진 있음)" 같은 글자는 버립니다.
+export const validImg = v => /^(img:[A-Za-z0-9_-]+|data:image\/|https:\/\/)/.test(v || '');
 const toInt = v => (Number.isInteger(v) ? v : (typeof v === 'string' && /^\d+$/.test(v.trim()) ? +v : null));
 
 // 문항을 표준 모양으로 정리합니다. 모르는 값은 버리지 않고 안전한 기본값으로 바꿉니다.
@@ -77,7 +79,7 @@ export function normalizePage(p) {
   o.level = LEVELS.includes(str(p.level)) ? str(p.level) : '중';
   const pts = Number(p.pts);
   o.pts = Number.isFinite(pts) && pts > 0 ? pts : 0;
-  if (str(p.img)) o.img = str(p.img);
+  if (validImg(str(p.img))) o.img = str(p.img);
   if (str(p.video)) o.video = str(p.video);
   return o;
 }
@@ -314,14 +316,19 @@ export function fmtClock(ms) {
   return h ? `${h}:${p(m)}:${p(ss)}` : `${p(m)}:${p(ss)}`;
 }
 export function toCSV(rows) {
-  const cell = v => { const s = v == null ? '' : String(v); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  // 글자 칸이 = + - @ 로 시작하면 엑셀이 수식으로 실행하므로 앞에 ' 를 붙여 글자로 만듭니다.
+  const cell = v => { let s = v == null ? '' : String(v); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   return '﻿' + rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n';
 }
 // 고른 문항만 교체: sel(고른 위치들, 오름차순)에 fresh를 차례로 넣습니다. 문항 고유번호(id)는 자리의 것을 지킵니다.
 export function replaceSelected(pages, sel, fresh) {
   if (sel.length !== fresh.length) throw new Error(`고른 문항은 ${sel.length}개인데 붙여 넣은 문항은 ${fresh.length}개예요. 개수를 맞춰 주세요.`);
   const out = pages.slice();
-  sel.forEach((i, k) => { out[i] = { ...fresh[k], id: pages[i].id }; });
+  sel.forEach((i, k) => {
+    const next = { ...fresh[k], id: pages[i].id };
+    if (!next.img && pages[i].img) next.img = pages[i].img;   // AI가 돌려준 문항에는 사진이 없으므로 원래 사진을 지킵니다
+    out[i] = next;
+  });
   return out;
 }
 

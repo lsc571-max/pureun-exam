@@ -42,6 +42,10 @@ public class MainActivity extends Activity {
         super.onCreate(saved);
         // 캡처·녹화 차단: 최근 앱 화면에서도 내용이 보이지 않습니다.
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE);
+        // 다른 앱이 화면 위에 띄우는 창(떠 있는 메모·채팅 등)을 숨깁니다 (안드로이드 12 이상)
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            try { getWindow().setHideOverlayWindows(true); } catch (Exception ignored) { }
+        }
         restoreDndIfLeftOn();
 
         web = new WebView(this);
@@ -120,8 +124,10 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void startLock() {
             ui.post(() -> {
+                // 이미 시험 중이면(고정이 풀려 다시 고정하는 경우) "풀림" 표시는 그대로 둡니다.
+                // 그래야 다시 고정됐을 때 웹에 알려 가림 화면을 걷을 수 있습니다.
+                if (!examOn) reportedUnpinned = false;
                 examOn = true;
-                reportedUnpinned = false;
                 lockAskedAt = System.currentTimeMillis();
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 dndOn();
@@ -136,6 +142,7 @@ public class MainActivity extends Activity {
         public void stopLock() {
             ui.post(() -> {
                 examOn = false;
+                reportedUnpinned = false;
                 ui.removeCallbacks(watchPin);
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 try { stopLockTask(); } catch (Exception ignored) { }
@@ -166,8 +173,8 @@ public class MainActivity extends Activity {
         public void run() {
             if (!examOn) return;
             boolean p = pinned();
-            // 고정을 요청한 직후에는 학생이 확인 창을 누를 시간(8초)을 줍니다.
-            if (!p && !reportedUnpinned && System.currentTimeMillis() - lockAskedAt > 8000) {
+            // 고정을 요청한 직후에는 학생이 확인 창을 읽고 누를 시간(25초)을 줍니다.
+            if (!p && !reportedUnpinned && System.currentTimeMillis() - lockAskedAt > 25000) {
                 reportedUnpinned = true;
                 tell("unpin");
             } else if (p && reportedUnpinned) {

@@ -4,7 +4,7 @@ import { S, be, parse } from './state.js';
 import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, CIRCLED, errText, hhmmss, download, copyText, shrinkImage } from './ui.js';
 
 const app = $('app');
-let bind = {}, users = {}, P = null, clockT = 0, liveT = 0, baseSubs = [];
+let bind = {}, users = {}, entry = {}, P = null, clockT = 0, liveT = 0, baseSubs = [];
 const LS = { get: k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 const ST = { draft: ['', '준비 중'], open: ['mid', '대기실 열림'], running: ['ok', '진행 중'], ended: ['', '종료'] };
 const pill = m => { const s = ST[m.status] || ST.draft; return `<span class="pill ${s[0]}">${s[1]}</span>${m.released ? ' <span class="pill blue">결과 공개</span>' : ''}${m.practice ? ' <span class="pill blue">문제풀이 공개</span>' : ''}`; };
@@ -19,8 +19,9 @@ export function start() {
     be.on('bind', v => { bind = v || {}; live(); }),
     be.on('users', v => { users = v || {}; live(); if (!P && $('listMain')) viewList(); }),
   ];
-  // 예전 방식의 명단이 남아 있으면 학생 입장을 막으므로 지웁니다 (지금은 학생이 직접 입력하고 입장)
-  be.get('roster').then(v => { if (v) be.remove('roster').catch(() => {}); }).catch(() => {});
+  baseSubs.push(be.on('entry', v => { entry = v || {}; if ($('codeBox')) paintCode(); if (!P && $('listMain')) viewList(); }));
+  // 반 목록을 서버에 적어 둡니다 (비어 있으면 기본값 A반·B반)
+  be.get('classes').then(v => { if (!v) saveClasses(C.DEFAULT_CLASSES).catch(() => {}); }).catch(() => {});
   P = null; viewList();
 }
 export function onClasses() { if ($('clsBox')) paintClasses(); if (P && (P.tab === 'run' || P.tab === 'result')) renderTab(); }
@@ -34,8 +35,9 @@ function live() {
 
 /* ================= 시험 목록 ================= */
 function viewList() {
+  const keep = { t: $('n-title') ? $('n-title').value : '', m: $('n-min') ? $('n-min').value : '50', f: document.activeElement && document.activeElement.id };
   const list = Object.entries(S.exams).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
-  app.innerHTML = `<div class="desk"><header><h1>푸른시험</h1><button data-a="people">학생 · 반 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
+  app.innerHTML = `<div class="desk"><header><h1>푸른시험</h1>${entry.code ? `<span class="pill blue" style="font-size:16px;padding:3px 12px">입장 코드 ${esc(entry.code)}</span>` : ''}<button data-a="people">학생 · 반 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
     <main id="listMain">
       <div class="panel"><h2>새 시험 만들기</h2>
         <div class="row"><label class="f" style="flex:1;min-width:180px">시험 이름<input class="in" id="n-title" placeholder="예: 기계공작법 중간고사" maxlength="60"></label>
@@ -44,6 +46,8 @@ function viewList() {
       ${list.length ? list.map(([id, m]) => `<button class="card" data-a="p-open" data-id="${esc(id)}"><div style="margin-bottom:6px">${pill(m)}</div><h3>${esc(m.title || '(이름 없음)')}</h3><div class="sm">${m.n || 0}문항 · ${m.total || 0}점 · ${m.minutes || 0}분</div></button>`).join('')
       : '<div class="panel"><div class="sm">아직 시험이 없어요. 위에서 새 시험을 만들어 주세요.</div></div>'}
     </main></div>`;
+  // 학생이 입장할 때마다 목록을 다시 그리므로, 쓰던 시험 이름이 지워지지 않게 되돌려 놓습니다
+  $('n-title').value = keep.t; $('n-min').value = keep.m; if (keep.f === 'n-title' || keep.f === 'n-min') $(keep.f).focus();
 }
 on('logout', async () => { if (await confirmBox('로그아웃할까요?', '', '로그아웃')) { closeExam(); await be.signOut(); location.href = './?prof=1'; } });
 on('new-exam', async () => {
@@ -61,10 +65,28 @@ on('people', () => {
     <div class="panel" style="padding:14px;box-shadow:none"><h2>반</h2><div class="sm">학생이 입장할 때 고르는 반입니다. 이름은 자유롭게 정할 수 있고(예: 1학년 A반, C반), 하나만 두면 학생은 반을 고르지 않습니다.</div>
       <div id="clsBox"></div>
       <div class="row"><input class="in" id="c-new" placeholder="새 반 이름" maxlength="20" style="flex:1;min-width:140px;font-size:16px;padding:9px 11px"><button class="btn s" data-a="c-add">반 추가</button></div></div>
+    <div class="panel" style="padding:14px;box-shadow:none"><h2>입장 코드 (선택)</h2><div class="sm">켜 두면 교실에서 불러 주는 코드를 아는 학생만 입장합니다. 교실 밖의 누군가가 다른 학생의 학번으로 먼저 들어와 그 학생을 막는 일을 방지합니다. 비워 두면 코드 없이 바로 입장합니다.</div>
+      <div id="codeBox"></div></div>
     <div class="panel" style="padding:14px;box-shadow:none"><h2>입장한 학생</h2><div class="sm">학생이 반·학번·이름을 직접 입력하고 들어옵니다. 한 학번은 처음 입장한 기기 하나만 쓸 수 있습니다. 휴대폰을 바꿨거나 학번을 잘못 입력한 학생은 <b>입장 취소</b>를 누르면 다시 입장할 수 있습니다. 답안은 그대로 남습니다.</div>
       <div id="peopleBox"></div></div>
     <button class="btn gh" data-a="modal-close">닫기</button>`, { wide: true });
-  paintPeople(); paintClasses();
+  paintPeople(); paintClasses(); paintCode();
+});
+function paintCode() {
+  const box = $('codeBox'); if (!box) return;
+  box.innerHTML = `<div class="row" style="margin-top:8px"><input class="in" id="code-in" inputmode="numeric" placeholder="예: 4821" maxlength="12" value="${esc(entry.code || '')}" style="width:150px;font-size:18px;padding:9px 11px;font-weight:700;letter-spacing:.08em">
+    <button class="btn s" data-a="code-save">저장</button><button class="btn s gh" data-a="code-rand">새 코드 만들기</button>${entry.code ? '<button class="btn s gh" data-a="code-off">코드 끄기</button>' : ''}
+    <span class="pill ${entry.code ? 'ok' : ''}">${entry.code ? '켜짐' : '꺼짐 — 코드 없이 입장'}</span></div>`;
+}
+const setCode = code => be.set('entry', code ? { code, need: true } : null);
+on('code-save', async () => { const c = $('code-in').value.trim(); if (c && !/^[A-Za-z0-9]{3,12}$/.test(c)) return toast('코드는 숫자나 영문 3~12자로 정해 주세요.'); await setCode(c); toast(c ? '입장 코드를 켰어요.' : '입장 코드를 껐어요.'); });
+on('code-rand', async () => { await setCode(String(1000 + Math.floor(Math.random() * 9000))); toast('새 코드를 만들었어요.'); });
+on('code-off', async () => { await setCode(''); toast('입장 코드를 껐어요.'); });
+on('unbind-all', async () => {
+  const st = students();
+  if (!st.length || !(await confirmBox('모든 학생의 입장을 취소할까요?', `${st.length}명이 모두 다시 입장해야 합니다. 저장된 답안은 그대로 남습니다.`, '모두 취소', { danger: true }))) return;
+  await be.update('', { bind: null, users: null }); toast('모두 취소했어요.');
+  document.querySelector('[data-a=people]')?.click();
 });
 function paintClasses() {
   const box = $('clsBox'); if (!box) return;
@@ -89,7 +111,7 @@ function paintPeople() {
   box.innerHTML = `<div class="sm" style="margin:8px 0 6px">전체 ${st.length}명 (${allClasses().map(c => `${esc(c)} ${cnt(c)}`).join(' · ')})</div>
     <div class="tw" style="max-height:40dvh;overflow:auto"><table><tr><th>반</th><th>학번</th><th>이름</th><th></th></tr>
     ${st.map(s => `<tr><td>${esc(s.cls)}</td><td>${esc(s.sid)}</td><td>${esc(s.name)}</td><td style="text-align:right"><button class="mini" data-a="unbind" data-sid="${esc(s.sid)}">입장 취소</button></td></tr>`).join('')}
-    </table></div>`;
+    </table></div><div class="row" style="margin-top:8px"><button class="mini red" data-a="unbind-all">모두 입장 취소</button></div>`;
 }
 on('unbind', async el => {
   const sid = el.dataset.sid, uid = bind[sid], r = people()[sid] || {};
@@ -126,8 +148,11 @@ function paintHead() {
 on('p-tab', el => { P.tab = el.dataset.t; hideCtx(); paintHead(); renderTab(); });
 function renderTab() { if (!P) return; ({ run: tabRun, edit: tabEdit, grade: tabGrade, result: tabResult })[P.tab](); paintClock(); }
 function paintClock() {
-  const el = $('pclock'); if (!el || !P) return; const m = meta();
-  el.textContent = m.status === 'running' ? C.fmtClock(m.endAt - be.now()) : '--:--';
+  if (!P) return; const m = meta(), el = $('pclock');
+  const left = m.status === 'running' ? m.endAt - be.now() : 0;
+  if (el) el.textContent = m.status === 'running' ? (left > 0 ? C.fmtClock(left) : '종료하는 중…') : '--:--';
+  // 시간이 끝나면(또는 "시험 종료"를 누르면) 학생들의 마지막 답과 제출을 8초 동안 받은 뒤 시험을 닫습니다
+  if (m.status === 'running' && left < -8000 && !P.closing) { P.closing = true; setMeta({ status: 'ended' }).catch(() => {}).then(() => { if (P) P.closing = false; }); }
 }
 const exam = () => C.splitExam(P.pages);
 const clsFilter = () => `<div class="tabs">${[['', '전체'], ...allClasses().map(c => [c, c])].map(([c, n]) => `<button data-a="p-cls" data-c="${esc(c)}" class="${P.cls === c ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>`;
@@ -198,18 +223,19 @@ function tabRun() {
 const setMeta = patch => be.update('exams/' + P.id, patch);
 on('ex-status', async el => {
   if (el.dataset.s === 'open' && C.validateBundle(P.pages).errors.length) return toast('문항에 고칠 곳이 있어요. 문항 탭에서 먼저 고쳐 주세요.');
-  await setMeta({ status: el.dataset.s });
+  await setMeta(el.dataset.s === 'open' ? { status: 'open', practice: false } : { status: el.dataset.s });   // 시험으로 열 때는 문제풀이 공개를 끕니다(정답 노출 방지)
 });
 on('ex-start', async () => {
   const m = meta();
   if (C.validateBundle(P.pages).errors.length) return toast('문항에 고칠 곳이 있어요.');
   if (!(await confirmBox('시험을 시작할까요?', `모든 반이 함께 시작합니다. <b>${m.minutes}분</b> 뒤 자동으로 끝납니다.`, '시작'))) return;
-  const now = be.now(); await setMeta({ status: 'running', startAt: now, endAt: now + m.minutes * 60000 });
+  const now = be.now(); await setMeta({ status: 'running', practice: false, startAt: now, endAt: now + m.minutes * 60000 });
 });
 on('ex-extend', async () => { await setMeta({ endAt: meta().endAt + 5 * 60000 }); toast('5분 연장했어요.'); });
 on('ex-end', async () => {
   if (!(await confirmBox('시험을 종료할까요?', '모든 학생의 시험이 바로 끝나고, 지금까지 저장된 답안으로 채점됩니다.', '종료', { danger: true }))) return;
-  await setMeta({ status: 'ended', endAt: Math.min(meta().endAt, be.now()) });
+  await setMeta({ endAt: Math.min(meta().endAt, be.now()) });   // 남은 시간을 0으로 → 학생 답안이 자동 제출되고, 잠시 뒤 시험이 닫힙니다
+  toast('종료하는 중입니다. 학생들의 마지막 답안을 받고 있어요.', 6000);
 });
 // 끝난 시험을 다시 엽니다 (시험을 못 본 학생용)
 on('ex-resume', () => {
@@ -225,8 +251,8 @@ on('rs-lock', el => el.classList.toggle('on'));
 on('rs-go', async () => {
   const minutes = Math.round(+$('rs-min').value), lock = $('rs-lock').classList.contains('on');
   if (!(minutes >= 1 && minutes <= 300)) return toast('시간은 1~300분으로 입력해 주세요.');
-  const m = meta(), now = be.now(), u = { [`exams/${P.id}/status`]: 'running', [`exams/${P.id}/endAt`]: now + minutes * 60000 };
-  if (lock) for (const [sid, a] of Object.entries(P.answers)) if (a.startedAt && !a.submittedAt) u[`answers/${P.id}/${sid}/submittedAt`] = m.endAt || now;
+  const now = be.now(), u = { [`exams/${P.id}/status`]: 'running', [`exams/${P.id}/practice`]: false, [`exams/${P.id}/endAt`]: now + minutes * 60000 };
+  if (lock) for (const [sid, a] of Object.entries(P.answers)) if (a.startedAt && !a.submittedAt) u[`answers/${P.id}/${sid}/submittedAt`] = now;
   await be.update('', u); closeModal(); toast(`${minutes}분 동안 다시 열었어요.`);
 });
 // 문항과 사진만 그대로 새 시험으로 복사합니다 (답안·점수는 복사하지 않음)
@@ -255,7 +281,7 @@ on('ex-release', async () => {
 on('unsubmit', async el => { if (await confirmBox('제출을 취소할까요?', '학생이 남은 시간 동안 다시 풀 수 있게 됩니다.', '취소하기')) await be.remove(`answers/${P.id}/${el.dataset.sid}/submittedAt`); });
 on('lv-show', el => {
   const sid = el.dataset.sid, r = people()[sid] || {}, lv = C.leaveSummary((P.answers[sid] || {}).ev);
-  const name = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림' };
+  const name = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함' };
   modal(`<h2>${esc(r.cls || '')} ${esc(sid)} ${esc(r.name || '')} — 이탈 ${lv.count}회</h2>
     <div class="tw"><table><tr><th>시각</th><th>내용</th></tr>${lv.list.map(e => `<tr><td>${hhmmss(e.at)}</td><td>${esc(name[e.t] || e.t)}</td></tr>`).join('')}</table></div>
     <button class="btn gh" data-a="modal-close">닫기</button>`);
@@ -279,6 +305,7 @@ on('s-practice', el => el.classList.toggle('on'));
 on('s-save', async () => {
   const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), practice = $('s-prac').classList.contains('on'), appOnly = $('s-app').classList.contains('on');
   if (!title || !(minutes >= 1 && minutes <= 300)) return toast('이름과 시간을 확인해 주세요.');
+  if (practice && ['open', 'running'].includes(meta().status)) return toast('시험이 열려 있는 동안에는 문제풀이 공개를 켤 수 없어요.', 4000);
   if (practice && !meta().practice && meta().status !== 'draft' && !(await confirmBox('시험 문항을 문제풀이로 공개할까요?', '학생이 정답과 해설을 모두 볼 수 있게 됩니다.', '공개', { danger: true }))) return;
   await setMeta({ title, minutes, practice, appOnly }); closeModal(); toast('저장했어요.');
 });
@@ -610,6 +637,7 @@ function tabGrade() {
   const list = P.blind ? C.shuffled(base, P.id + q.id) : base;   // 이름을 가릴 때는 학번 순서도 섞습니다
   const done = list.filter(s => typeof (P.essay[s.sid] || {})[q.id] === 'number').length;
   const step = q.pts <= 20 ? Array.from({ length: Math.floor(q.pts) + 1 }, (_, i) => i) : null;
+  if (step && !Number.isInteger(q.pts)) step.push(q.pts);   // 배점이 2.5점처럼 딱 떨어지지 않아도 만점을 줄 수 있게
   $('pmain').innerHTML = `
     <div class="panel">${tabs}
       <div class="q" style="font-size:18px">${esc(q.q)}</div>
