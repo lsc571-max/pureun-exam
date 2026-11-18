@@ -161,14 +161,15 @@ function tabRun() {
     draft: `<button class="btn s am" data-a="ex-status" data-s="open">학생에게 열기 (대기실)</button>`,
     open: `<button class="btn s am" data-a="ex-start">시험 시작 (모든 반 함께)</button><button class="btn s gh" data-a="ex-status" data-s="draft">대기실 닫기</button>`,
     running: `<button class="btn s gh" data-a="ex-extend">시간 5분 연장</button><button class="btn s red" data-a="ex-end">시험 종료 (모든 반 함께)</button>`,
-    ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (10분 추가)</button>'}`,
+    ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (못 본 학생 응시)</button>'}`,
   }[m.status || 'draft'];
   const guide = { draft: '문항과 명단을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 모든 반이 동시에 시작합니다.', running: `${hhmmss(m.startAt)} 시작 · ${hhmmss(m.endAt)} 종료 예정. 시간이 되면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 서술형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
   $('pmain').innerHTML = `
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="pill" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
       <div class="sm">${esc(guide)}</div>
       ${v.errors.length ? `<div class="box no">문항에 고칠 곳이 ${v.errors.length}군데 있어요. <b>문항</b> 탭에서 확인해 주세요.</div>` : ''}
-      <div class="row">${btns}<button class="btn s gh" data-a="ex-settings">시험 설정</button></div></div>
+      <div class="row">${btns}<button class="btn s gh" data-a="ex-settings">시험 설정</button><button class="btn s gh" data-a="ex-copy">시험 복사 (재시험용)</button></div>
+      ${m.status === 'ended' && m.released ? '<div class="sm">결과를 공개한 상태에서는 정답이 보이므로 다시 열 수 없습니다. 다시 열려면 먼저 "결과 공개 취소"를 누르거나, "시험 복사"로 새 시험을 만드세요.</div>' : ''}</div>
     <div class="kpis"><div class="kpi"><b>${k.inb} / ${k.all}</b><span>입장</span></div><div class="kpi"><b>${k.go}</b><span>응시 중</span></div><div class="kpi"><b>${k.sub}</b><span>제출</span></div><div class="kpi"><b>${k.lv}</b><span>이탈한 학생</span></div></div>
     <div class="panel"><div class="row"><h2 style="margin-right:auto">응시 현황</h2>${clsFilter()}</div>
       <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>상태</th><th class="num">답한 문항</th><th class="num">이탈</th><th></th></tr>
@@ -198,9 +199,37 @@ on('ex-end', async () => {
   if (!(await confirmBox('시험을 종료할까요?', '모든 학생의 시험이 바로 끝나고, 지금까지 저장된 답안으로 채점됩니다.', '종료', { danger: true }))) return;
   await setMeta({ status: 'ended', endAt: Math.min(meta().endAt, be.now()) });
 });
-on('ex-resume', async () => {
-  if (!(await confirmBox('시험을 다시 열까요?', '10분 동안 다시 진행합니다. 제출하지 않은 학생은 이어서 풀 수 있습니다.', '다시 열기'))) return;
-  await setMeta({ status: 'running', endAt: be.now() + 10 * 60000 });
+// 끝난 시험을 다시 엽니다 (시험을 못 본 학생용)
+on('ex-resume', () => {
+  const m = meta(), started = Object.values(P.answers).filter(a => a.startedAt && !a.submittedAt).length;
+  modal(`<h2>시험 다시 열기</h2>
+    <div class="txt">정한 시간 동안 시험이 다시 진행됩니다. 이미 제출한 학생은 다시 풀 수 없습니다.</div>
+    <label class="f">다시 여는 시간(분)<input class="in" id="rs-min" type="number" min="1" max="300" value="${m.minutes || 50}"></label>
+    <button class="check on" data-a="rs-lock" id="rs-lock"><i>✓</i>이미 응시한 학생은 제출 처리하기</button>
+    <div class="sm">켜 두면 <b>시험을 아예 보지 않은 학생만</b> 응시할 수 있습니다. 끄면 응시했지만 제출하지 않은 학생${started ? ` ${started}명` : ''}도 이어서 풀 수 있습니다.</div>
+    <div class="row"><button class="btn gh" data-a="modal-close">취소</button><button class="btn am" data-a="rs-go">다시 열기</button></div>`);
+});
+on('rs-lock', el => el.classList.toggle('on'));
+on('rs-go', async () => {
+  const minutes = Math.round(+$('rs-min').value), lock = $('rs-lock').classList.contains('on');
+  if (!(minutes >= 1 && minutes <= 300)) return toast('시간은 1~300분으로 입력해 주세요.');
+  const m = meta(), now = be.now(), u = { [`exams/${P.id}/status`]: 'running', [`exams/${P.id}/endAt`]: now + minutes * 60000 };
+  if (lock) for (const [sid, a] of Object.entries(P.answers)) if (a.startedAt && !a.submittedAt) u[`answers/${P.id}/${sid}/submittedAt`] = m.endAt || now;
+  await be.update('', u); closeModal(); toast(`${minutes}분 동안 다시 열었어요.`);
+});
+// 문항과 사진만 그대로 새 시험으로 복사합니다 (답안·점수는 복사하지 않음)
+on('ex-copy', async () => {
+  const m = meta();
+  if (!(await confirmBox('이 시험을 복사할까요?', '문항과 사진을 그대로 담은 새 시험이 "준비 중" 상태로 만들어집니다. 답안과 점수는 복사되지 않습니다. 재시험용으로 문항을 고쳐 쓰세요.', '복사'))) return;
+  const src = P.id, id = 'e' + Date.now().toString(36), at = be.now();
+  const [draft, sheet, key, imgs] = await Promise.all(['drafts/', 'sheets/', 'keys/', 'images/'].map(k => be.get(k + src)));
+  const u = { ['exams/' + id]: { title: (m.title || '시험') + ' (재시험)', minutes: m.minutes || 50, status: 'draft', released: false, practice: false, n: m.n || 0, total: m.total || 0, notice: m.notice || null, end: m.end || null, at } };
+  if (draft) u['drafts/' + id] = { ...draft, at };
+  if (sheet) u['sheets/' + id] = { ...sheet, at };
+  if (key) u['keys/' + id] = { ...key, at };
+  if (imgs) u['images/' + id] = imgs;
+  await be.update('', u);
+  toast('복사했어요. 새 시험을 엽니다.'); openExam(id, 'edit');
 });
 on('ex-release', async () => {
   const m = meta();

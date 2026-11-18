@@ -289,7 +289,7 @@ try {
   await prof.waitForFunction(() => /홍길동/.test(document.getElementById('pmain').textContent));
   const rankRow = await prof.textContent('#pmain table tr:nth-child(2)');
   assert.match(rankRow.replace(/\s+/g, ' '), /1\s*A반\s*20261234\s*홍길동\s*15\s*8\s*7/, '순위표: ' + rankRow);   // 4+4+0 + 서술 7
-  assert.equal(await prof.locator('.pill.no', { hasText: '미응시' }).count(), 2);
+  assert.equal(await prof.locator('.pill.no', { hasText: '미응시' }).count(), 2);   // 이영희 · 자유입장
   await shot(prof, 'p5-result');
   await act(prof, 'r-tab', '[data-t="q"]'); assert.match(await prof.textContent('#pmain'), /\d+%/);
   await act(prof, 'r-tab', '[data-t="miss"]'); assert.match(await prof.textContent('#pmain'), /셋째 문제/);
@@ -298,6 +298,24 @@ try {
   const [dl] = await Promise.all([prof.waitForEvent('download'), act(prof, 'csv')]);
   const csv = await readFile(await dl.path(), 'utf8');
   assert.match(csv, /순위,반,학번,이름,총점/); assert.match(csv, /1,A반,20261234,홍길동,15,20,8,7,4,2,/); assert.match(csv, /미응시/);
+
+  say('끝난 시험 다시 열기: 못 본 학생만 응시한다');
+  await act(prof, 'p-tab', '[data-t="run"]'); await act(prof, 'ex-resume');
+  await prof.fill('#rs-min', '3'); await act(prof, 'rs-go');
+  await prof.waitForSelector('[data-a="ex-end"]');
+  d = await db(prof);
+  assert.equal(d.exams[exId].status, 'running'); assert.ok(d.exams[exId].endAt > Date.now() + 120000);
+  const late = await ctx.newPage(); watch(late, '늦은 학생');
+  await late.goto(BASE + '/?mock=1'); await late.waitForSelector('#e-sid');
+  await act(late, 'cls', '[data-c="B반"]'); await late.fill('#e-sid', '20261302'); await late.fill('#e-name', '이영희'); await act(late, 'enter');
+  await late.waitForSelector('[data-a="open-exam"]'); await act(late, 'open-exam');
+  await late.waitForSelector('[data-a="agree"]'); await act(late, 'agree'); await act(late, 'start');
+  await late.waitForSelector('#clock');                                                   // 못 본 학생은 응시 가능
+  await stu.reload(); await stu.waitForSelector('[data-a="open-exam"]'); await act(stu, 'open-exam');
+  await stu.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent)); // 제출한 학생은 다시 못 풂
+  await late.close();
+  await act(prof, 'ex-end'); await act(prof, 'dlg-yes'); await prof.waitForSelector('[data-a="ex-release"]');
+  await act(prof, 'p-tab', '[data-t="result"]'); await prof.waitForSelector('[data-a="csv"]');
 
   say('결과 공개 → 학생이 점수와 해설을 본다');
   await act(prof, 'ex-release'); await act(prof, 'dlg-yes');
@@ -325,6 +343,17 @@ try {
   await stu.waitForSelector('.opt.right');
   assert.match(await stu.textContent('#app'), /비밀해설1/);
   await shot(stu, 's10-practice');
+
+  say('시험 복사: 문항만 복사되고 답안은 복사되지 않는다');
+  await act(prof, 'ex-copy'); await act(prof, 'dlg-yes');
+  await prof.waitForFunction(() => /\(재시험\)/.test(document.getElementById('phead').textContent));
+  assert.equal(await prof.locator('.qrow').count(), 6);
+  d = await db(prof);
+  const copyId = Object.keys(d.exams).find(k => k !== exId);
+  assert.equal(d.exams[copyId].status, 'draft'); assert.equal(d.exams[copyId].n, 4);
+  assert.equal(d.sheets[copyId].data, d.sheets[exId].data); assert.equal(d.keys[copyId].data, d.keys[exId].data);
+  assert.ok(!(d.answers && d.answers[copyId]), '답안까지 복사됨');
+  assert.ok(Object.keys(d.answers[exId]).length >= 2, '원래 시험의 답안이 사라짐');
 
   assert.deepEqual(errors, [], '브라우저 오류');
   console.log('\n화면 테스트 통과');
