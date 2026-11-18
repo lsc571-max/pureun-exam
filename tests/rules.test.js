@@ -33,7 +33,7 @@ beforeEach(async () => {
     'admins/prof': true,
     'classes/A반': 0, 'classes/B반': 1,
     // 진행 중인 시험
-    'exams/run': { title: '진행 중', status: 'running', startAt: now - 60000, endAt: now + 600000, released: false },
+    'exams/run': { title: '진행 중', status: 'running', minutes: 50, extra: 0, startAt: now - 60000, endAt: now + 4800000, released: false },
     'sheets/run': { data: '[]' }, 'keys/run': { data: '{}' }, 'images/run/i1': 'data:x',
     // 아직 시작 전 (대기실)
     'exams/wait': { title: '대기', status: 'open', released: false },
@@ -221,6 +221,30 @@ test('답안: 시작 전·종료 후·제출 후에는 못 고친다', async () 
   await assertSucceeds(prof().ref(`answers/run/${A}/submittedAt`).remove()); // 교수는 제출 취소 가능
   await assertSucceeds(ans('u1', 'run').child('a/q1').set(2));
   await assertSucceeds(prof().ref(`answers/run/${B}/submittedAt`).set(Date.now())); // 교수의 "제출 처리"
+});
+
+test('시험 시간은 학생마다 자기가 시작한 때부터 흐른다', async () => {
+  await enter('u1', A, '홍길동', 'A반');
+  await enter('u2', B, '김철수', 'B반');
+  const now = Date.now();
+  // 5분짜리 시험, 전체 마감은 넉넉함
+  await seed({ 'exams/five': { status: 'running', minutes: 5, extra: 0, startAt: now - 3600000, endAt: now + 3600000 } });
+  await seed({ [`answers/five/${A}/startedAt`]: now - 6 * 60000 });            // 홍길동은 6분 전에 시작 → 시간 끝
+  await assertFails(ans('u1', 'five').child('a/q1').set(1));
+  await assertFails(ans('u1', 'five').child('submittedAt').set(Date.now()));
+  await assertFails(ans('u1', 'five').child('ev').push({ t: 'leave', at: Date.now() }));
+  await assertSucceeds(begin('u2', 'five', B));                                // 김철수는 지금 시작 → 5분을 온전히 받음
+  await assertSucceeds(ans('u2', 'five', B).child('a/q1').set(1));
+  await seed({ 'exams/five/extra': 2 * 60000 });                               // 교수가 2분 연장 → 홍길동도 다시 쓸 수 있음(6분 < 5+2분)
+  await assertSucceeds(ans('u1', 'five').child('a/q1').set(1));
+  await seed({ 'exams/five/extra': 0, [`answers/five/${A}/until`]: Date.now() + 60000 });   // 교수가 이 학생에게만 시간을 따로 줌
+  await assertSucceeds(ans('u1', 'five').child('a/q1').set(2));
+  await assertFails(ans('u1', 'five').child('until').set(Date.now() + 9e9));   // 학생은 자기 시간을 늘릴 수 없음
+  await assertFails(ans('u2', 'five', B).child('until').set(Date.now() + 9e9));
+  await seed({ [`answers/five/${A}/until`]: Date.now() - 60000 });             // 따로 준 시간이 지남
+  await assertFails(ans('u1', 'five').child('a/q1').set(3));
+  await seed({ 'exams/five/endAt': Date.now() - 60000 });                      // 전체 마감이 지나면 아무도 못 씀
+  await assertFails(ans('u2', 'five', B).child('a/q1').set(2));
 });
 
 test('장문형 점수: 공개 뒤 자기 것만 읽고, 학생은 못 쓴다', async () => {

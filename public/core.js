@@ -334,17 +334,15 @@ export function replaceSelected(pages, sel, fresh) {
 
 /* ---------- 복사 버튼 부탁문 ---------- */
 export const FORMAT_EXAMPLE = `[
- {"t":"intro", "title":"시험 제목", "body":"시험 시간과 주의사항"},
  {"t":"choice", "q":"문제", "opts":["보기1","보기2","보기3","보기4"], "a":0, "why":"왜 정답인지 해설", "level":"중", "pts":4},
  {"t":"check", "q":"옳은 것을 모두 고르시오", "opts":["보기1","보기2","보기3","보기4"], "a":[0,2], "why":"해설", "level":"상", "pts":4},
  {"t":"dropdown", "q":"문제", "opts":["보기1","보기2","보기3","보기4"], "a":1, "why":"해설", "level":"하", "pts":4},
  {"t":"short", "q":"문제", "answers":["정답","같은 뜻의 다른 표기","흔한 오타"], "why":"해설", "level":"중", "pts":4},
  {"t":"long", "q":"문제", "model":"모범 답안", "why":"채점 기준", "level":"상", "pts":10},
  {"t":"image", "q":"문제", "img":"", "ans":"choice", "opts":["보기1","보기2","보기3","보기4"], "a":2, "why":"해설", "level":"하", "pts":4},
- {"t":"video", "q":"문제", "video":"https://youtu.be/영상주소", "ans":"short", "answers":["정답"], "why":"해설", "level":"중", "pts":4},
- {"t":"end", "title":"고생하셨습니다", "body":"결과는 교수님이 공개하면 볼 수 있습니다."}
+ {"t":"video", "q":"문제", "video":"https://youtu.be/영상주소", "ans":"short", "answers":["정답"], "why":"해설", "level":"중", "pts":4}
 ]
-- t: 쪽 유형 (intro 안내 / choice 객관식 / check 체크박스 / dropdown 드롭다운 / short 단답형 / long 장문형 / image 그림 문제 / video 영상 문제 / end 마무리)
+- t: 문항 유형 (choice 객관식 / check 체크박스 / dropdown 드롭다운 / short 단답형 / long 장문형 / image 그림 문제 / video 영상 문제)
 - a: 정답 위치. 0부터 셉니다 (첫 번째 보기가 0). 체크박스는 [0,2] 처럼 정답 번호를 모두 적습니다.
 - answers: 단답형에서 정답으로 인정할 표기를 모두 적습니다. 첫 번째가 대표 정답입니다. 띄어쓰기와 영문 대소문자 차이는 자동으로 같은 답으로 봅니다.
 - ans: 그림·영상 문제의 답하는 방식 (choice / check / dropdown / short / long)
@@ -417,7 +415,7 @@ ${promptPointsText(pl)}
 - 그림 문제는 img를 빈 칸("")으로 두고, 필요한 사진 설명을 JSON 밖에 따로 적습니다.
 
 [출력 형식]
-아래 형식의 JSON 배열 하나를 코드 블록 하나에 담습니다. 첫 쪽은 intro, 마지막 쪽은 end입니다.
+아래 형식의 JSON 배열 하나를 코드 블록 하나에 담습니다. 배열에는 문제만 넣습니다(안내문·맺음말은 넣지 않습니다). 배열의 첫 번째가 1번 문항입니다.
 ${FORMAT_EXAMPLE}
 
 [절차]

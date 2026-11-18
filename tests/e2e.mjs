@@ -116,7 +116,9 @@ try {
   assert.match(await prof.textContent('#p-out'), /문제 5개.*배점 합계 23점/s);
   await act(prof, 'p-apply', '[data-m="all"]');
   await prof.waitForSelector('.qrow');
-  assert.equal(await prof.locator('.qrow').count(), 7);
+  assert.equal(await prof.locator('#qlist .qrow').count(), 5);
+  assert.equal(await prof.locator('.qrow.fixed').count(), 2, '안내·마무리 쪽은 고정 줄로 보여야 함');
+  assert.equal(await prof.locator('.qrow.fixed [data-a]').count(), 0, '안내·마무리 쪽은 고치거나 지울 수 없어야 함');
   let d = await db(prof); const exId = Object.keys(d.exams)[0];
   assert.equal(d.exams[exId].n, 5); assert.equal(d.exams[exId].total, 23);
   for (const secret of ['비밀', '사출금형', '"a":', 'answers']) assert.ok(!d.sheets[exId].data.includes(secret), '문제지에 ' + secret + ' 가 들어 있음');
@@ -139,12 +141,12 @@ try {
   await prof.locator('.f-opt').nth(4).fill('마1');
   await shot(prof, 'p2-editq');
   await act(prof, 'f-save'); await prof.waitForFunction(() => document.getElementById('modal').hidden);
-  assert.deepEqual((await pages(prof, exId))[1].opts, ['가1', '나1', '다1', '라1', '마1']);
+  assert.deepEqual((await pages(prof, exId))[0].opts, ['가1', '나1', '다1', '라1', '마1']);
   await row(prof, '첫째 문제').locator('[data-a="ed-edit"]').click(); await prof.waitForSelector('.f-opt');
   await prof.click('[data-a="f-optdel"][data-j="4"]');
   await act(prof, 'f-save'); await prof.waitForFunction(() => document.getElementById('modal').hidden);
   let pg = await pages(prof, exId);
-  assert.deepEqual(pg[1].opts, ['가1', '나1', '다1', '라1']); assert.equal(pg[1].a, 2, '보기를 빼도 정답 자리는 그대로');
+  assert.deepEqual(pg[0].opts, ['가1', '나1', '다1', '라1']); assert.equal(pg[0].a, 2, '보기를 빼도 정답 자리는 그대로');
 
   say('답하는 방식을 바꾼다 (객관식 → 단답형 → 객관식)');
   await row(prof, '첫째 문제').locator('[data-a="ed-edit"]').click(); await prof.waitForSelector('#f-kind');
@@ -163,12 +165,12 @@ try {
     await prof.mouse.move(g.x, t.y + (after ? t.height - 4 : 4), { steps: 4 });
     await prof.mouse.up();
   };
-  await drag(5, 1, false);   // 서술 문제(6번째 쪽)를 첫째 문제 앞으로
-  await prof.waitForFunction(() => /서술 문제/.test(document.querySelector('.qrow[data-i="1"]').textContent));
-  assert.deepEqual((await pages(prof, exId)).map(p => p.q || p.t), ['intro', '서술 문제', ...QS.slice(0, 4), 'end']);
-  await drag(1, 5, true);    // 다시 맨 뒤 문제 자리로
-  await prof.waitForFunction(() => /서술 문제/.test(document.querySelector('.qrow[data-i="5"]').textContent));
-  assert.deepEqual((await pages(prof, exId)).map(p => p.q || p.t), ['intro', ...QS, 'end']);
+  await drag(4, 0, false);   // 서술 문제(5번째)를 첫째 문제 앞으로
+  await prof.waitForFunction(() => /서술 문제/.test(document.querySelector('.qrow[data-i="0"]').textContent));
+  assert.deepEqual((await pages(prof, exId)).map(p => p.q), ['서술 문제', ...QS.slice(0, 4)]);
+  await drag(0, 4, true);    // 다시 맨 뒤로
+  await prof.waitForFunction(() => /서술 문제/.test(document.querySelector('.qrow[data-i="4"]').textContent));
+  assert.deepEqual((await pages(prof, exId)).map(p => p.q), QS);
 
   say('오른쪽 버튼 메뉴: 복제 · 지우기 · 되돌리기');
   await row(prof, '넷째 문제').click({ button: 'right' });
@@ -176,22 +178,40 @@ try {
   await shot(prof, 'p3-ctx');
   await prof.click('#ctx [data-a="ed-dup"]');
   await prof.waitForFunction(() => document.querySelectorAll('.qrow').length === 8);
-  await prof.click('.qrow[data-i="5"] [data-a="ed-rm"]');   // 복제된 쪽 지우기
+  await prof.click('.qrow[data-i="4"] [data-a="ed-rm"]');   // 복제된 쪽 지우기
   await prof.waitForFunction(() => document.querySelectorAll('.qrow').length === 7);
   await act(prof, 'toast-act');                              // 되돌리기
   await prof.waitForFunction(() => document.querySelectorAll('.qrow').length === 8);
-  await prof.click('.qrow[data-i="5"] [data-a="ed-rm"]');
+  await prof.click('.qrow[data-i="4"] [data-a="ed-rm"]');
   await prof.waitForFunction(() => document.querySelectorAll('.qrow').length === 7);
-  assert.deepEqual((await pages(prof, exId)).map(p => p.q || p.t), ['intro', ...QS, 'end']);
+  assert.deepEqual((await pages(prof, exId)).map(p => p.q), QS);
 
   say('고른 문항만 교체');
-  await prof.check('.ed-sel[data-i="3"]');
+  await prof.check('.ed-sel[data-i="2"]');
   await act(prof, 'ed-replace');
   await prof.fill('#p-text', JSON.stringify([{ t: 'check', q: '셋째 문제', opts: ['가3', '나3', '다3', '라3'], a: [0, 3], why: '비밀해설3-수정', level: '상', pts: 2 }]));
   await act(prof, 'p-check'); await act(prof, 'p-apply', '[data-m="sel"]');
   await prof.waitForFunction(() => document.getElementById('modal').hidden);
   d = await db(prof); assert.ok(d.keys[exId].data.includes('비밀해설3-수정'));
   await shot(prof, 'p4-edit');
+
+  say('학생 화면으로 보기: 저장하지 않고 학생 모양 그대로 넘겨 본다');
+  await act(prof, 'pv-open', ':not([data-i])');
+  await prof.waitForSelector('#pvphone');
+  assert.match(await prof.textContent('#pvphone'), /시험 안내.*확인했습니다/s);
+  await act(prof, 'pv-go', '[data-d="1"]');
+  assert.match(await prof.textContent('#pvphone'), /첫째 문제/);
+  assert.deepEqual(await prof.locator('#pvphone .opt span:nth-child(2)').allTextContents(), ['가1', '나1', '다1', '라1']);
+  await prof.locator('#pvphone .opt', { hasText: '나1' }).click();
+  assert.equal(await prof.locator('#pvphone .opt.on').count(), 1);
+  await shot(prof, 'p4b-preview');
+  for (let i = 0; i < 5; i++) await act(prof, 'pv-go', '[data-d="1"]');
+  assert.match(await prof.textContent('#pvphone'), /고생하셨습니다/);
+  await act(prof, 'modal-close');
+  await row(prof, '둘째 문제').click({ button: 'right' }); await prof.click('#ctx [data-a="pv-open"]');   // 문항 하나만 바로 보기
+  await prof.waitForSelector('#pvphone #dd');
+  await act(prof, 'modal-close');
+  d = await db(prof); assert.ok(!d.answers, '미리 보기에서 누른 답이 저장됨');
 
   say('문제 만들기 부탁문: 객관식·하는 자동, 배점은 합계에 맞춰 자동');
   await act(prof, 'cp', '[data-k="make"]');
@@ -212,12 +232,13 @@ try {
   await shot(prof, 'p5-make');
   await act(prof, 'mk-copy');
   const made = await prof.textContent('pre.code');
+  assert.ok(!/"t":"intro"|"t":"end"/.test(made), '부탁문 형식에 안내·마무리 쪽이 들어 있음');
   assert.match(made, /기계공작법/); assert.match(made, /모두 13문항 — 객관식 10문항, 장문형 3문항/); assert.match(made, /하 30% · 중 50% · 상 20%/);
   await act(prof, 'modal-close');
 
   say('검토 부탁문 복사');
   await act(prof, 'cp', '[data-k="review"]');
-  assert.match(await prof.textContent('pre.code'), /\/\* 2번 \*\/.*"a":2/s);
+  assert.match(await prof.textContent('pre.code'), /\/\* 1번 \*\/.*"a":2/s);
   await act(prof, 'modal-close');
 
   say('"안드로이드는 앱으로만 응시" 스위치');
@@ -357,6 +378,17 @@ try {
   await prof.waitForFunction(() => /응시 중/.test(document.getElementById('pmain').textContent) && /5 \/ 5/.test(document.getElementById('pmain').textContent));
   await prof.waitForSelector('[data-a="lv-show"]');
   await prof.waitForSelector('.donut'); await prof.waitForSelector('.hist');
+  assert.match(await prof.textContent('#pmain [data-dl]'), /^0[0-5]:\d\d$/, '학생별 남은 시간이 보이지 않음');
+  say('시험 중 띠: 다른 탭에서도 진행 상황이 보이고, 누르면 진행 탭으로 간다');
+  await act(prof, 'p-tab', '[data-t="edit"]');
+  await prof.waitForSelector('#pband:not([hidden])');
+  assert.match(await prof.textContent('#pband'), /시험 중.*전체 마감까지.*응시 중 1명.*제출 0명.*이탈 1명.*평균 \d/s);
+  await row(prof, '첫째 문제').locator('[data-a="ed-edit"]').click();
+  assert.match(await prof.textContent('#modal'), /시험이 진행 중입니다/);   // 시험 중에 고치려 하면 경고
+  await act(prof, 'modal-close');
+  await shot(prof, 'p6b-band');
+  await act(prof, 'p-band');
+  await prof.waitForSelector('.donut');
   await shot(prof, 'p6-run');
 
   say('문항 목록과 제출');
@@ -374,6 +406,10 @@ try {
   await stu2.waitForSelector('[data-a="open-exam"]'); await act(stu2, 'open-exam');
   await stu2.waitForSelector('[data-a="agree"]'); await act(stu2, 'agree'); await act(stu2, 'start');
   await stu2.waitForSelector('#clock');
+  // 교수가 시작을 누른 지 한참 뒤에 시작했어도, 이 학생의 5분은 지금부터 흐른다
+  assert.match(await stu2.textContent('#clock'), /^(05:00|04:5\d)$/, '늦게 시작한 학생이 시험 시간을 온전히 받지 못함');
+  d = await db(prof);
+  assert.ok(d.answers[exId]['20261301'].startedAt - d.answers[exId]['20261234'].startedAt > 3000);
   await answer(stu2, { '첫째 문제': '나1', '둘째 문제': '나2', '셋째 문제': ['가3', '라3'], '넷째 문제': '금형', '서술 문제': '김철수 답' });
   await prof.evaluate(id => import('./state.js').then(m => m.be.update('exams/' + id, { endAt: Date.now() + 1500 })), exId);
   await stu2.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent), null, { timeout: 8000 });
@@ -415,6 +451,31 @@ try {
   assert.match(rankRow.replace(/\s+/g, ' '), /1\s*A반\s*20261234\s*홍길동\s*18\s*11\s*7/, '순위표: ' + rankRow);   // 4+4+0+3 + 장문형 7
   assert.equal(await prof.locator('.pill.no', { hasText: '미응시' }).count(), 1);   // 자유입장
   await shot(prof, 'p9-rank');
+  say('학생별 상세: 무엇을 틀렸는지 보고, 그 학생만 PDF로');
+  await prof.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+  await prof.click('[data-a="stu-detail"][data-sid="20261234"]');
+  await prof.waitForSelector('.dtab');
+  assert.equal(await prof.locator('.dtab tr').count(), 6);                       // 머리글 + 5문항
+  const badRow = await prof.locator('.dtab tr.bad', { hasText: '셋째 문제' }).textContent();
+  assert.match(badRow, /가3/); assert.match(badRow, /가3, 라3/); assert.match(badRow, /틀림/);   // 학생의 답 · 정답 · 결과
+  assert.match(await prof.locator('.dtab tr', { hasText: '넷째 문제' }).textContent(), /사출 금헝.*맞음/s);
+  await shot(prof, 'p9b-detail');
+  await prof.click('[data-a="d-filter"][data-w="1"]');
+  assert.equal(await prof.locator('.dtab tr').count(), 3);                       // 틀린 체크박스 + 감점된 장문형
+  await act(prof, 'pdf-one');
+  await prof.waitForFunction(() => window.__printed === 1);
+  let pr = await prof.textContent('#print');
+  assert.match(pr, /개인 결과/); assert.match(pr, /A반 · 20261234 · 홍길동/); assert.match(pr, /18 \/ 23점/); assert.ok(!/김철수/.test(pr), '개인 PDF에 다른 학생이 들어 있음');
+  await act(prof, 'modal-close');
+  say('전체 결과 PDF · 학생별 결과 PDF');
+  await act(prof, 'pdf-all');
+  await prof.waitForFunction(() => window.__printed === 2);
+  pr = await prof.textContent('#print');
+  assert.match(pr, /전체 결과/); assert.match(pr, /홍길동/); assert.match(pr, /김철수/); assert.match(pr, /미응시/); assert.match(pr, /문항별 결과/);
+  await act(prof, 'pdf-each');
+  await prof.waitForFunction(() => window.__printed === 3);
+  assert.equal(await prof.locator('#print .pr-page').count(), 2);                // 응시한 학생마다 한 쪽
+  assert.equal(await prof.evaluate(() => getComputedStyle(document.getElementById('print')).display), 'none', '인쇄용 내용이 화면에 보임');
   await act(prof, 'r-tab', '[data-t="chart"]');
   await prof.waitForSelector('.qchart');
   assert.equal(await prof.locator('.qchart').count(), 5);
@@ -521,7 +582,7 @@ try {
   say('시험 복사: 문항만 복사되고 답안은 복사되지 않는다');
   await act(prof, 'ex-copy'); await act(prof, 'dlg-yes');
   await prof.waitForFunction(() => /\(재시험\)/.test(document.getElementById('phead').textContent));
-  assert.equal(await prof.locator('.qrow').count(), 7);
+  assert.equal(await prof.locator('#qlist .qrow').count(), 5);
   d = await db(prof);
   const copyId = Object.keys(d.exams).find(k => k !== exId);
   assert.equal(d.exams[copyId].status, 'draft'); assert.equal(d.exams[copyId].n, 5);

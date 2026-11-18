@@ -44,6 +44,22 @@ button:disabled{cursor:not-allowed}
 .bar button{font-weight:700;padding:5px 11px;border-radius:9px;background:var(--soft);font-size:13px;flex:none}
 .prog{flex:none;height:4px;background:var(--soft)}.prog i{display:block;height:100%;background:var(--pri);border-radius:0 4px 4px 0;transition:width .25s}
 .body{flex:1;min-height:0;overflow:hidden auto;padding:20px 18px 14px;display:flex;flex-direction:column;gap:14px;overscroll-behavior:contain}
+/* 문항 쪽: 세로에서는 문제 아래에 답, 가로에서는 문제 왼쪽 · 답 오른쪽 */
+.qa,.qb{display:flex;flex-direction:column;gap:14px;min-width:0}
+.body.split>.qb{flex:1 0 auto}
+@media (orientation:landscape) and (max-height:560px){
+  .phone{max-width:none}
+  .bar{padding-top:calc(6px + env(safe-area-inset-top,0px));padding-bottom:6px;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
+  .body{padding:12px max(18px,env(safe-area-inset-right,0px)) 10px max(18px,env(safe-area-inset-left,0px))}
+  .body.split{flex-direction:row;gap:20px;overflow:hidden}
+  .body.split>.qa,.body.split>.qb{flex:1 1 0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:4px}
+  .foot{padding:6px max(14px,env(safe-area-inset-right,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px))}
+  .btn{min-height:42px;padding:9px 10px}
+  .q{font-size:19px}.h1{font-size:22px}
+  .pic,.pic img{max-height:46vh}
+  .ta{min-height:90px}
+  .opt{min-height:46px;padding:10px 12px}
+}
 /* 내용이 길면 줄어들지 않고 쪽 안에서 스크롤됩니다 (보기 글자가 겹치는 것 방지) */
 .body>*{flex-shrink:0}
 .body.center{justify-content:center}
@@ -166,6 +182,21 @@ pre.code{background:var(--bg);border:1px solid var(--line);border-radius:12px;pa
 .qrow input[type=checkbox]{width:19px;height:19px;flex:none;accent-color:var(--pri)}
 .qrow .t{flex:1;min-width:0}.qrow .t b{display:block;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .qrow .t span{font-size:13px;color:var(--muted)}
+/* 안내·마무리 쪽: 자동으로 만들어지는 고정 줄 */
+.qrow.fixed{background:transparent;border-style:dashed;color:var(--muted)}
+.qrow.fixed .t b{color:var(--muted)}.qrow.fixed .t span{white-space:normal}
+/* 시험 중 띠: 어느 탭에서든 맨 위에 보입니다 */
+.desk header .band{flex:1 1 100%;display:flex;gap:6px 16px;flex-wrap:wrap;align-items:center;text-align:left;background:var(--pri-soft);color:var(--pri-d);border-radius:12px;padding:8px 14px;font-size:14px;font-weight:500}
+.band b{font-weight:900}.band small{opacity:.75}.band .go{margin-left:auto;font-weight:700}
+.band span{font-variant-numeric:tabular-nums}
+/* 학생 화면으로 보기 */
+.pvwrap{display:flex;justify-content:center;background:var(--bg);border-radius:16px;padding:14px}
+.phone.pv{width:min(100%,390px);max-width:390px;height:min(70dvh,700px);border:1px solid var(--line);border-radius:26px;box-shadow:var(--shadow)}
+.phone.pv .bar{padding-top:11px}.phone.pv .foot{padding-bottom:10px}
+/* 학생별 상세 */
+.namebtn{font-weight:700;color:var(--blue);text-decoration:underline;text-underline-offset:3px}
+.dtab td{vertical-align:top}.dtab tr.bad td{background:var(--red-soft)}.dtab tr.pend td{background:var(--amber-soft)}
+td.pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:260px}
 /* AI 부탁문 묶음 */
 .ask{background:var(--blue-soft);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:9px}
 .ask-t{font-weight:900;font-size:15px;color:#24609f}.ask-t span{font-weight:500;font-size:13px;margin-left:6px;opacity:.85}
@@ -195,6 +226,24 @@ pre.code{background:var(--bg);border:1px solid var(--line);border-radius:12px;pa
 .qchart{border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:6px}
 .qchart:first-child{border-top:0;padding-top:0}
 .qchart h4{font-size:15px;font-weight:700;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+/* ===== 인쇄(PDF) ===== */
+#print{display:none}
+@media print{
+  @page{size:A4;margin:14mm}
+  html,body{height:auto;overflow:visible;background:#fff;font-size:10.5pt}
+  #app,#modal,#zoom,#guard,#ctx,#toast{display:none!important}
+  #print{display:block;color:#000}
+  .pr-page{page-break-after:always;break-after:page}.pr-page:last-child{page-break-after:auto;break-after:auto}
+  #print h1{font-size:15pt;font-weight:900;margin-bottom:6pt}
+  .pr-meta{display:flex;flex-direction:column;gap:2pt;margin-bottom:8pt;font-size:10.5pt}
+  #print table{width:100%;border-collapse:collapse;font-size:9.5pt}
+  #print th,#print td{border:.6pt solid #888;padding:3pt 5pt;text-align:left;vertical-align:top;white-space:normal}
+  #print th{background:#eee;text-align:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #print td.c{text-align:center;white-space:nowrap}#print td.pre{white-space:pre-wrap;max-width:none}
+  #print tr.bad td{background:#fbe9e7;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #print tr{break-inside:avoid}
+  .pr-foot{margin-top:8pt;font-size:8.5pt;color:#555;text-align:right}
+}
 @media(min-width:561px){.phone{box-shadow:0 0 0 1px var(--line),0 10px 40px rgba(23,35,29,.08)}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -205,6 +254,7 @@ pre.code{background:var(--bg);border:1px solid var(--line);border-radius:12px;pa
 <div id="zoom" hidden><img alt=""></div>
 <div id="guard" hidden></div>
 <div id="ctx" hidden></div>
+<div id="print"></div>
 <div id="toast" hidden></div>
 <noscript>자바스크립트를 켜야 시험을 볼 수 있습니다.</noscript>
 <script type="module" src="./app.js"></script>

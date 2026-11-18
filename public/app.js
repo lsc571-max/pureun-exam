@@ -2,6 +2,7 @@
 import * as C from './core.js';
 import { createAnswerStore } from './save.js';
 import { S, be, setBackend, APP, parse } from './state.js';
+import { media, typeChip, answerHtml } from './view.js';
 import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, closeZoom, CIRCLED, errText, hhmmss } from './ui.js';
 
 const CONFIG = {
@@ -124,6 +125,8 @@ function onExams() {
 }
 // 시간이 지났으면 교수가 "종료"를 누르기 전이라도 끝난 시험으로 봅니다
 const isOver = m => m.status === 'ended' || (m.status === 'running' && be.now() >= m.endAt);
+// 학생마다 "시험 시작"을 누른 때부터 시험 시간이 흐릅니다. 전체 마감(endAt)을 넘길 수는 없습니다.
+const deadline = (m, startedAt, until) => Math.min(m.endAt, until || (startedAt + m.minutes * 60000 + (m.extra || 0)));
 const pracOpen = m => !!m.practice && (m.status === 'draft' || m.status === 'ended');
 function viewHome() {
   view = 'home';
@@ -149,7 +152,7 @@ on('open-exam', async el => {
   N = { id, checked: false, my };
   if (my.submittedAt) return viewDone();
   if (isOver(m)) return m.released ? openReview(id, 'result') : viewDone();
-  if (m.status === 'running' && my.startedAt) return startExam();
+  if (m.status === 'running' && my.startedAt) return be.now() < deadline(m, my.startedAt, my.until) ? startExam() : viewDone();
   viewNotice();
 });
 const APK_URL = 'https://github.com/lsc571-max/pureun-exam/releases/latest/download/pureun-exam.apk';
@@ -175,7 +178,7 @@ function viewNotice() {
       <div class="h1">${esc(nt.title || m.title || '시험')}</div>
       ${nt.body ? `<div class="txt">${esc(nt.body)}</div>` : ''}
       <ul class="rules">
-        <li>시험 시간은 <b>${m.minutes}분</b>이고, 끝나면 자동으로 제출됩니다.</li>
+        <li><b>시험 시작</b>을 누른 때부터 <b>${m.minutes}분</b>이 흐르고, 끝나면 자동으로 제출됩니다.</li>${running ? `<li>늦게 시작해도 전체 마감 시각 <b>${hhmmss(m.endAt).slice(0, 5)}</b>에는 모두 끝납니다.</li>` : ''}
         <li>문제 순서와 보기 순서는 학생마다 다릅니다.</li>
         <li>시험 화면을 벗어나면 <b>횟수와 시각이 기록</b>됩니다.</li>
         <li>화면 캡처·녹화·복사는 금지입니다.</li>
@@ -213,13 +216,14 @@ async function startExam() {
     // 시작 기록을 먼저 남깁니다. 시작한 학생만 문제지를 받을 수 있습니다.
     const sess = Math.random().toString(36).slice(2, 12);
     const first = { sess, dev: (APP ? 'app ' : 'web ') + navigator.userAgent.slice(0, 200) };
-    if (!mine.startedAt) first.startedAt = be.now();
+    const startedAt = mine.startedAt || be.now();
+    if (!mine.startedAt) first.startedAt = startedAt;
     await within(be.update(path, first));
     const [sheetRec, imgs] = await within(Promise.all([be.get('sheets/' + id), be.get('images/' + id)]), 25000);
     const sheet = C.fixSheet(parse(sheetRec, []));
     if (!sheet.length) return toast('문제를 불러오지 못했어요.');
     X = {
-      id, path, sheet, byId: Object.fromEntries(sheet.map(q => [q.id, q])), imgs: imgs || {},
+      id, path, startedAt, until: mine.until || 0, sheet, byId: Object.fromEntries(sheet.map(q => [q.id, q])), imgs: imgs || {},
       order: C.examOrder(sheet, id, S.me.sid), idx: Math.max(0, +(sessionStorage.getItem('idx:' + id) || 0)),
       sess, leaves: C.leaveSummary(mine.ev).count, away: false, unsubs: [], done: false, typing: 0,
     };
@@ -231,6 +235,7 @@ async function startExam() {
     });
     X.store.load(mine.a || {});
     X.unsubs.push(be.on(path + '/sess', v => { if (X && !X.done && v && v !== X.sess) otherWindow(); }));
+    X.unsubs.push(be.on(path + '/until', v => { if (X) { X.until = v || 0; tick(); } }));   // 교수가 이 학생의 시간을 따로 준 경우
     X.unsubs.push(be.on(path + '/submittedAt', v => { if (X && !X.done && v) finish(true); }));
     X.unsubs.push(be.onConnected(c => { if (X) { X.conn = c; paintSave(); } }));
     X.tick = setInterval(tick, 500);
@@ -259,7 +264,7 @@ function tick() {
   if (!X || X.done) return;
   const m = S.exams[X.id];
   if (!m || m.status !== 'running') return finish(true);
-  const left = m.endAt - be.now();
+  const left = deadline(m, X.startedAt, X.until) - be.now();
   const c = $('clock'); if (c) { c.textContent = C.fmtClock(left); c.classList.toggle('low', left < 5 * 60000); }
   if (left <= 0) finish(true);
 }
@@ -269,35 +274,17 @@ function paintSave() {
   el.className = 'save' + (off ? ' off' : '');
   el.textContent = off ? '연결 끊김 — 답은 이 기기에 저장되어 있고, 연결되면 자동으로 보냅니다' : st === 'saving' ? '저장 중…' : '✓ 저장됨';
 }
-const imgSrc = (q, imgs) => !q.img ? '' : q.img.startsWith('img:') ? (imgs[q.img.slice(4)] || '') : q.img;
-function media(q, imgs) {
-  let h = '';
-  const src = imgSrc(q, imgs);
-  if (src) h += `<div class="pic" data-a="zoom" role="button" aria-label="사진 크게 보기"><img src="${esc(src)}" alt="문제 사진" draggable="false"></div>`;
-  if (q.video) {
-    const y = C.youtubeId(q.video);
-    h += y ? `<div class="vid"><iframe src="https://www.youtube-nocookie.com/embed/${y}?playsinline=1&rel=0&modestbranding=1" title="문제 영상" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`
-      : `<div class="vid"><video src="${esc(q.video)}" controls playsinline controlslist="nodownload"></video></div>`;
-  }
-  return h;
-}
 on('zoom', el => zoom(el.querySelector('img').src));
-const typeChip = q => `${q.t === 'image' || q.t === 'video' ? C.TYPE_NAME[q.t] + ' · ' : ''}${C.KIND_NAME[q.k] || '문제'} · ${q.pts}점`;
 
 function renderExam() {
   if (!X) return;
   flushTyping();
   const o = X.order[X.idx], q = X.byId[o.id], a = X.store.get(q.id), n = X.order.length;
   sessionStorage.setItem('idx:' + X.id, X.idx);
-  let body;
-  if (q.k === 'choice') body = o.opt.map((orig, slot) => `<button class="opt ${a === orig ? 'on' : ''}" data-a="pick" data-v="${orig}" aria-pressed="${a === orig}"><span class="n">${slot + 1}</span><span>${esc(q.opts[orig])}</span></button>`).join('');
-  else if (q.k === 'check') { const sel = C.unpackChecks(a); body = '<div class="sm">맞는 것을 모두 고르세요.</div>' + o.opt.map((orig, slot) => `<button class="opt sq ${sel.includes(orig) ? 'on' : ''}" data-a="tick" data-v="${orig}" aria-pressed="${sel.includes(orig)}"><span class="n">${sel.includes(orig) ? '✓' : slot + 1}</span><span>${esc(q.opts[orig])}</span></button>`).join(''); }
-  else if (q.k === 'dropdown') body = `<select class="in" id="dd" aria-label="답 고르기"><option value="">눌러서 고르세요</option>${o.opt.map(orig => `<option value="${orig}" ${a === orig ? 'selected' : ''}>${esc(q.opts[orig])}</option>`).join('')}</select>`;
-  else if (q.k === 'short') body = `<input class="in" id="short" placeholder="답을 짧게 쓰세요" maxlength="100" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${esc(a || '')}">`;
-  else body = `<textarea class="in ta" id="essay" placeholder="여기에 답을 쓰세요" maxlength="4000" autocomplete="off" autocorrect="off" spellcheck="false">${esc(a || '')}</textarea><div class="sm" id="count">${(a || '').length}자</div>`;
+  const body = answerHtml(q, o, a);
   app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span><span class="clock" id="clock">--:--</span></div>
     <div class="prog"><i style="width:${(X.idx + 1) / n * 100}%"></i></div>
-    <div class="body"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, X.imgs)}${body}<div class="save" id="save" style="margin-top:auto"></div></div>
+    <div class="body split"><div class="qa"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, X.imgs)}</div><div class="qb">${body}<div class="save" id="save" style="margin-top:auto"></div></div></div>
     <div class="foot"><button class="btn gh" data-a="prev" ${X.idx ? '' : 'disabled'}>이전</button><button class="btn gh" data-a="qlist">문항 목록</button>${X.idx < n - 1 ? '<button class="btn" data-a="next">다음</button>' : '<button class="btn am" data-a="qlist">제출</button>'}</div></div>`;
   paintSave(); tick();
   const ta = $('essay') || $('short');

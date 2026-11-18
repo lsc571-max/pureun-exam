@@ -285,4 +285,6 @@ test('부탁문: 고른 값과 형식 예시가 들어가고, 사진 자료와 �
   const ex = C.ensureIds(C.parseBundle(C.FORMAT_EXAMPLE).map(C.normalizePage));
   assert.equal(C.validateBundle(ex).errors.length, 0);
   assert.deepEqual(ex.filter(C.isQuestion).map(C.kindOf), ['choice', 'check', 'dropdown', 'short', 'long', 'choice', 'short']);
+  assert.ok(ex.every(C.isQuestion), '형식 예시에는 문제만 있어야 함(안내·마무리 쪽 없음) — AI가 문항 번호를 하나씩 밀려 쓰지 않게');
+  assert.ok(!C.promptMake().includes('intro'));
 });

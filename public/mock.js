@@ -34,7 +34,8 @@ export async function createBackend() {
     if (ks[0] === 'users') { const r = at(db, 'roster/' + (v && v.sid)); const code = at(db, 'entry/code'); if ((!open && (!r || r.name !== v.name || r.cls !== v.cls)) || at(db, path) != null || (code && (!v || v.code !== code))) throw deny(); return; }
     if (ks[0] === 'answers') {
       const ex = at(db, 'exams/' + ks[1]) || {}, mine = at(db, 'bind/' + ks[2]) === user.uid;
-      if (!mine || ex.status !== 'running' || Date.now() >= ex.endAt + 20000 || at(db, `answers/${ks[1]}/${ks[2]}/submittedAt`) != null) throw deny();
+      const me = at(db, `answers/${ks[1]}/${ks[2]}`) || {}, own = me.until || (me.startedAt && ex.minutes ? me.startedAt + ex.minutes * 60000 + (ex.extra || 0) : Infinity);
+      if (!mine || ex.status !== 'running' || Date.now() >= ex.endAt + 20000 || Date.now() >= own + 20000 || (ks[3] === 'until') || at(db, `answers/${ks[1]}/${ks[2]}/submittedAt`) != null) throw deny();
       return;
     }
     throw deny();
