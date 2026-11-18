@@ -2,6 +2,7 @@
 import * as C from './core.js';
 import { S, be, parse } from './state.js';
 import { media, typeChip, answerHtml } from './view.js';
+import { hideToast } from './ui.js';
 import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, CIRCLED, errText, hhmmss, download, copyText, shrinkImage } from './ui.js';
 
 const app = $('app');
@@ -9,16 +10,19 @@ let bind = {}, users = {}, entry = {}, P = null, clockT = 0, liveT = 0, baseSubs
 const LS = { get: k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 /* ----- 되돌리기 · 다시 하기 (Ctrl+Z · Ctrl+Y, 화면 버튼) — 최근 10번까지. 이 탭을 닫으면 사라집니다 ----- */
 const HIST = { undo: [], redo: [] };
-async function record(label, doFn, undoFn) {
+async function record(label, doFn, undoFn, guard = null) {
   await doFn();
-  HIST.undo.push({ label, doFn, undoFn }); if (HIST.undo.length > 10) HIST.undo.shift();
+  HIST.undo.push({ label, doFn, undoFn, guard }); if (HIST.undo.length > 10) HIST.undo.shift();
   HIST.redo = []; paintHist();
 }
+// 되돌릴 수 없는 일(시작·종료·설정·입장 취소·시험 지우기 등)을 하면, 그 전 기록으로 되돌아가지 않게 비웁니다
+function histBarrier() { HIST.undo = []; HIST.redo = []; paintHist(); }
 function refreshView() { if (P) renderTab(); else if ($('listMain')) viewList(); }
 let histBusy = false;
 async function histStep(from, to, fnKey, done) {
   if (histBusy) return; const h = from.pop();
   if (!h) return toast(fnKey === 'undoFn' ? '되돌릴 것이 없어요.' : '다시 할 것이 없어요.');
+  if (h.guard && !(await h.guard())) { from.push(h); return; }
   histBusy = true;
   try { await h[fnKey](); to.push(h); toast(`${done}: ${h.label}`); }
   catch (e) { from.push(h); toast(errText(e)); }
@@ -38,7 +42,8 @@ document.addEventListener('keydown', e => {
   if (S.role !== 'prof' || !(e.ctrlKey || e.metaKey) || e.altKey) return;
   const t = e.target; if (t && t.closest && t.closest('input,textarea,select,[contenteditable]')) return;   // 글 쓰는 칸에서는 글자 되돌리기
   if (!$('modal').hidden) return;
-  const k = e.key.toLowerCase();
+  if (e.repeat) return;   // 길게 누르고 있어도 한 번만
+  const k = e.code === 'KeyZ' ? 'z' : e.code === 'KeyY' ? 'y' : e.key.toLowerCase();
   if (k === 'z' && !e.shiftKey) { e.preventDefault(); histUndo(); }
   else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); histRedo(); }
 });
@@ -133,6 +138,7 @@ on('code-save', async () => { const c = $('code-in').value.trim(); if (c && !/^[
 on('code-rand', async () => { await setCode(String(1000 + Math.floor(Math.random() * 9000))); toast('새 코드를 만들었어요.'); });
 on('code-off', async () => { await setCode(''); toast('입장 코드를 껐어요.'); });
 on('unbind-all', async () => {
+  histBarrier();
   const st = students();
   if (!st.length || !(await confirmBox('모든 학생의 입장을 취소할까요?', `${st.length}명이 모두 다시 입장해야 합니다. 저장된 답안은 그대로 남습니다.`, '모두 취소', { danger: true }))) return;
   await be.update('', { bind: null, users: null }); toast('모두 취소했어요. 답안·점수·이름은 결과에 남아 있습니다.');
@@ -166,7 +172,8 @@ function paintPeople() {
 on('unbind', async el => {
   const sid = el.dataset.sid, uid = bind[sid], r = people()[sid] || {};
   const again = !!$('peopleBox');
-  if (!(await confirmBox('입장을 취소할까요?', `${esc(r.name || sid)} 학생이 다시(다른 기기에서도) 입장할 수 있게 됩니다. 답안·점수·이름은 결과에 그대로 남습니다.`, '입장 취소'))) return;
+  if (!(await confirmBox('입장을 취소할까요?', `${esc(r.name || sid)} 학생이 다시(다른 기기에서도) 입장할 수 있게 됩니다. 답안·점수·이름은 결과에 그대로 남습니다.\n시험을 보는 중이면 학생 화면이 바로 입장 화면으로 돌아가고, 다시 들어오면 이어서 풉니다. 시험 시간은 그동안에도 흐릅니다.`, '입장 취소'))) return;
+  histBarrier();
   const u = { ['bind/' + sid]: null };
   for (const [k, v] of Object.entries(users)) if ((v && v.sid === sid) || k === uid) u['users/' + k] = null;
   await be.update('', u); toast('취소했어요. 학생이 다시 입장하면 됩니다.');
@@ -187,7 +194,7 @@ async function openExam(id, tab = 'run') {
   paintHead(); renderTab();
   clockT = setInterval(paintClock, 1000);
 }
-function closeExam() { clearInterval(clockT); clearTimeout(liveT); hideCtx(); if (P) P.unsubs.forEach(u => u()); P = null; }
+function closeExam() { histBarrier(); hideToast(); clearInterval(clockT); clearTimeout(liveT); hideCtx(); if (P) P.unsubs.forEach(u => u()); P = null; }
 on('p-open', el => openExam(el.dataset.id));
 on('p-back', () => { closeExam(); viewList(); });
 function paintHead() {
@@ -198,7 +205,7 @@ function paintHead() {
   $('ptabs').innerHTML = [['run', '진행'], ['edit', '문항'], ['grade', '채점'], ['result', '결과']].map(([k, n]) => `<button data-a="p-tab" data-t="${k}" class="${P.tab === k ? 'on' : ''}">${n}</button>`).join('');
 }
 on('p-band', () => { P.tab = 'run'; hideCtx(); paintHead(); renderTab(); });
-on('p-tab', el => { P.tab = el.dataset.t; hideCtx(); paintHead(); renderTab(); });
+on('p-tab', el => { P.tab = el.dataset.t; hideCtx(); hideToast(); paintHead(); renderTab(); });
 function renderTab() { if (!P) return; ({ run: tabRun, edit: tabEdit, grade: tabGrade, result: tabResult })[P.tab](); paintClock(); }
 function paintClock() {
   if (!P) return; const m = meta(), el = $('pclock'), now = be.now();
@@ -212,7 +219,7 @@ function paintClock() {
 }
 // 시험 중에는 어느 탭에서든 맨 위에 진행 상황을 보여 줍니다. 누르면 진행 탭으로 갑니다.
 function liveCounts() {
-  const { sheet, key } = exam(), rows = Object.entries(P.answers).filter(([, a]) => a && a.startedAt);
+  const { sheet, key } = exam(), rows = Object.entries(P.answers).filter(([sid, a]) => a && a.startedAt && !isTest(sid));   // 테스트 학생은 세지 않음
   const tot = rows.map(([sid, a]) => C.scoreStudent(sheet, key, a.a, P.essay[sid]).total);
   return { go: rows.filter(([, a]) => !a.submittedAt).length, sub: rows.filter(([, a]) => a.submittedAt).length,
     lv: rows.filter(([, a]) => C.leaveSummary(a.ev).count).length, locked: rows.filter(([, a]) => isLocked(a)).length, avg: tot.length ? tot.reduce((x, y) => x + y, 0) / tot.length : 0, max: sheet.reduce((n, q) => n + q.pts, 0) };
@@ -263,7 +270,8 @@ function tabRun() {
     const r = whoOf(sid) || { name: '(이름 없음)', cls: '' }, a = P.answers[sid], lv = C.leaveSummary(a && a.ev);
     return { sid, ...r, a, lv, cnt: a && a.a ? Object.values(a.a).filter(x => x !== '' && x != null).length : 0 };
   }).filter(r => !P.cls || r.cls === P.cls).sort((a, b) => String(a.cls).localeCompare(String(b.cls)) || a.sid.localeCompare(b.sid));
-  const sub = rows.filter(r => r.a && r.a.submittedAt), go = rows.filter(r => r.a && r.a.startedAt && !r.a.submittedAt), wait = rows.filter(r => !(r.a && r.a.startedAt));
+  const real = rows.filter(r => !isTest(r.sid));   // 그래프·평균에는 테스트 학생을 넣지 않음
+  const sub = real.filter(r => r.a && r.a.submittedAt), go = real.filter(r => r.a && r.a.startedAt && !r.a.submittedAt), wait = real.filter(r => !(r.a && r.a.startedAt));
   const btns = {
     draft: `<button class="btn s am" data-a="ex-status" data-s="open">학생에게 열기 (대기실)</button>`,
     open: `<button class="btn s am" data-a="ex-start">시험 시작 (모든 반 함께)</button><button class="btn s gh" data-a="ex-status" data-s="draft">대기실 닫기</button>`,
@@ -271,7 +279,7 @@ function tabRun() {
     ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '<button class="btn s gh" data-a="ex-reopen">못 본 학생 열기 (결과 공개 취소 후)</button>' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (못 본 학생 응시)</button>'}`,
   }[m.status || 'draft'];
   const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 학생의 "시험 시작" 버튼이 켜지고, 학생이 그 버튼을 누른 때부터 각자 시간이 흐릅니다.', running: `${hhmmss(m.startAt)}에 열림 · 학생마다 "시험 시작"을 누른 때부터 ${m.minutes}분 · 전체 마감 ${hhmmss(m.endAt)}. 각자 시간이 끝나면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 장문형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
-  const scores = rows.filter(r => r.a && r.a.startedAt).map(r => C.scoreStudent(sheet, key, r.a.a, P.essay[r.sid]).total);
+  const scores = real.filter(r => r.a && r.a.startedAt).map(r => C.scoreStudent(sheet, key, r.a.a, P.essay[r.sid]).total);
   $('pmain').innerHTML = `
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="sm">전체 마감까지</span><span class="pill blue" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
       <div class="sm">${esc(guide)}</div>
@@ -294,7 +302,7 @@ function tabRun() {
         <td style="white-space:nowrap;text-align:right">${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">입장 취소</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button> ` : ''}${r.a ? `<button class="mini red" data-a="stu-del" data-sid="${esc(r.sid)}">지우기</button>` : ''}</td></tr>`).join('')}
       </table></div>${rows.length ? '' : '<div class="sm">아직 입장한 학생이 없어요. 학생이 반·학번·이름을 입력하고 들어오면 여기에 나타납니다.</div>'}</div>`;
 }
-const setMeta = patch => be.update('exams/' + P.id, patch);
+const setMeta = patch => { histBarrier(); return be.update('exams/' + P.id, patch); };
 on('ex-status', async el => {
   if (el.dataset.s === 'open' && C.validateBundle(P.pages).errors.length) return toast('문항에 고칠 곳이 있어요. 문항 탭에서 먼저 고쳐 주세요.');
   await setMeta(el.dataset.s === 'open' ? { status: 'open', practice: false } : { status: el.dataset.s });   // 시험으로 열 때는 문제풀이 공개를 끕니다(정답 노출 방지)
@@ -406,6 +414,7 @@ on('s-save', async () => {
 });
 on('ex-wipe', async () => {
   if (!(await confirmBox('답안을 모두 지울까요?', '이 시험의 모든 학생 답안, 이탈 기록, 장문형 점수가 지워지고 시험이 "준비 중"으로 돌아갑니다. <b>되돌릴 수 없습니다.</b>', '모두 지우기', { danger: true }))) return;
+  histBarrier();
   await be.update('', { ['answers/' + P.id]: null, ['essay/' + P.id]: null, ['trash/' + P.id]: null, [`exams/${P.id}/status`]: 'draft', [`exams/${P.id}/released`]: false, [`exams/${P.id}/startAt`]: null, [`exams/${P.id}/endAt`]: null });
   closeModal(); toast('지웠어요.');
 });
@@ -419,6 +428,7 @@ on('ex-delete', async () => {
 /* ================= 문항 편집 ================= */
 // 문항을 저장합니다. 교수용 원본, 학생용 문제지(정답 없음), 정답지를 함께 씁니다.
 async function savePagesFor(id, pages) {
+  if (!(await be.get(`exams/${id}/status`))) throw new Error('이 시험은 이미 지워졌어요.');   // 지운 시험이 되살아나지 않게
   pages = C.ensureIds(pages);
   const x = C.splitExam(pages), v = C.validateBundle(pages), at = be.now();
   await be.update('', {
@@ -428,11 +438,16 @@ async function savePagesFor(id, pages) {
     [`exams/${id}/n`]: v.stats.n, [`exams/${id}/total`]: v.stats.total,
   });
   if (P && P.id === id) P.pages = pages;
+  return at;
 }
-// 문항을 바꾸고, 되돌리기(Ctrl+Z) 기록에 남깁니다
+// 문항을 바꾸고, 되돌리기 기록에 남깁니다. 그 사이에 문항이 바뀌었으면(다른 기기 등) 되돌리지 않고,
+// 시험이 이미 열려 있으면 되돌리기 전에 한 번 묻습니다.
 async function changePages(next, label) {
   const id = P.id, before = P.pages.slice(), after = C.ensureIds(next);
-  await record(label, () => savePagesFor(id, after), () => savePagesFor(id, before));
+  let at = 0;
+  const unchanged = async () => { if ((await be.get(`drafts/${id}/at`)) !== at) throw new Error('그 사이에 문항이 바뀌어서 되돌릴 수 없어요.'); };
+  const guard = async () => { const st = (S.exams[id] || {}).status; return !st || st === 'draft' || confirmBox('문항을 되돌릴까요?', '이 시험은 이미 학생에게 열려 있습니다. 되돌리면 학생에게 보이는 문제와 채점이 바뀝니다.', '되돌리기', { danger: true }); };
+  await record(label, async () => { if (at) await unchanged(); at = await savePagesFor(id, after); }, async () => { await unchanged(); at = await savePagesFor(id, before); }, guard);
 }
 
 const srcOf = p => !p.img ? '' : p.img.startsWith('img:') ? (P.imgs[p.img.slice(4)] || '') : p.img;
@@ -475,7 +490,7 @@ const selected = () => [...P.sel].filter(i => i < P.pages.length).sort((a, b) =>
 // 지운 직후에는 되돌릴 수 있게 합니다
 async function removePages(idx) {
   P.sel.clear(); await changePages(P.pages.filter((_, i) => !idx.includes(i)), `문항 ${idx.length}개 지우기`); tabEdit();
-  toast(`${idx.length}쪽을 지웠어요.`, 7000, { label: '되돌리기 (Ctrl+Z)', fn: () => histUndo() });
+  toast(`${idx.length}쪽을 지웠어요.`, 7000, { label: '되돌리기', fn: () => histUndo() });
 }
 on('ed-rm', el => removePages([+el.dataset.i]));
 on('ed-del', () => { const sel = selected(); if (!sel.length) return toast('지울 문항을 먼저 골라 주세요(왼쪽 네모).'); return removePages(sel); });
@@ -786,13 +801,14 @@ function resultRows() {
   const ppl = people(), { sheet, key } = exam(), sids = new Set([...Object.keys(ppl), ...Object.keys(P.answers)]);
   const rows = [...sids].map(sid => {
     const r = whoOf(sid) || { name: '(이름 없음)', cls: '' }, a = P.answers[sid], sc = C.scoreStudent(sheet, key, a && a.a, P.essay[sid]);
-    return { sid, name: r.name, cls: r.cls, took: !!(a && a.startedAt), a, lv: C.leaveSummary(a && a.ev), ...sc };
+    return { sid, name: r.name, cls: r.cls, took: !!(a && a.startedAt), test: isTest(sid), a, lv: C.leaveSummary(a && a.ev), ...sc };
   });
   return { sheet, key, rows };
 }
 function tabResult() {
   const m = meta(), { sheet, key, rows } = resultRows();
-  const took = rows.filter(r => r.took && (!P.cls || r.cls === P.cls)), absent = rows.filter(r => !r.took && (!P.cls || r.cls === P.cls));
+  const tests = rows.filter(r => r.test && r.took);   // 테스트 학생은 순위·평균·통계에서 빼고 따로 보여 줌
+  const took = rows.filter(r => r.took && !r.test && (!P.cls || r.cls === P.cls)), absent = rows.filter(r => !r.took && !r.test && (!P.cls || r.cls === P.cls));
   const rk = C.ranked(took), tot = took.map(r => r.total), avg = tot.length ? tot.reduce((a, b) => a + b, 0) / tot.length : 0;
   const pend = took.reduce((n, r) => n + r.essayPending, 0), max = sheet.reduce((n, q) => n + q.pts, 0);
   const stats = C.questionStats(sheet, key, took.map(r => ({ answers: (r.a && r.a.a) || {}, essay: P.essay[r.sid] || {} })));
@@ -802,14 +818,14 @@ function tabResult() {
   let body = '';
   if (P.rtab === 'rank') body = `<div class="sm">이름을 누르면 그 학생이 무엇을 틀렸는지 볼 수 있습니다.</div><div class="tw"><table><tr><th class="num">순위</th><th>반</th><th>학번</th><th>이름</th><th class="num">총점</th><th class="num">자동 채점</th><th class="num">장문형</th><th class="num">이탈</th><th class="num">카메라 경고 · 잠금</th><th class="num">풀이 시간</th><th>제출</th><th></th></tr>
     ${rk.map(r => `<tr><td class="num"><b>${r.rank}</b></td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td><button class="namebtn" data-a="stu-detail" data-sid="${esc(r.sid)}">${esc(r.name)}</button>${testPill(r.sid)}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.mc}</td><td class="num">${r.essay}${r.essayPending ? ' <span class="pill mid">채점 전</span>' : ''}</td><td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td><td class="num">${r.lv.face || r.lv.locks ? `${r.lv.face} · ${r.lv.locks}` : ''}</td><td class="num">${totalTime(r.a) ? C.fmtDur(totalTime(r.a)) : ''}</td><td>${r.a.submittedAt ? hhmmss(r.a.submittedAt) : '<span class="pill">미제출</span>'}</td><td><button class="mini red" data-a="stu-del" data-sid="${esc(r.sid)}">지우기</button></td></tr>`).join('')}
-    ${absent.map(r => `<tr><td class="num">—</td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}${testPill(r.sid)}</td><td colspan="8"><span class="pill no">미응시</span></td></tr>`).join('')}</table></div>${rk.length || absent.length ? '' : '<div class="sm">아직 응시한 학생이 없어요.</div>'}`;
+    ${absent.map(r => `<tr><td class="num">—</td><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}${testPill(r.sid)}</td><td colspan="8"><span class="pill no">미응시</span></td></tr>`).join('')}</table></div>${tests.length ? `<div class="sm" style="margin-top:6px"><b>테스트 학생</b> — 순위·평균·통계·CSV·PDF에서 빠집니다. ${tests.map(r => `<button class="namebtn" data-a="stu-detail" data-sid="${esc(r.sid)}">${esc(r.sid)} ${r.total}점</button> <button class="mini red" data-a="stu-del" data-sid="${esc(r.sid)}">지우기</button>`).join(' · ')}</div>` : ''}${rk.length || absent.length || tests.length ? '' : '<div class="sm">아직 응시한 학생이 없어요.</div>'}`;
   else if (P.rtab === 'chart') body = `<h2>점수 분포</h2>${histChart(tot, max)}<h2 style="margin-top:8px">문항별 응답</h2><div class="sm">초록 막대(✓)가 정답, 분홍 막대는 가장 많이 고른 오답입니다.</div>${questionCharts(stats)}`;
   else if (P.rtab === 'miss') body = C.mostMissed(stats, 5).map(s => `<div class="box ${s.rate < .4 ? 'no' : 'warn'}"><b>${s.no}번 · ${s.auto ? `정답률 ${Math.round(s.rate * 100)}%` : `평균 ${s.avg.toFixed(1)} / ${s.pts}점`} · 난이도 ${esc(s.level || '')}</b>\n${esc(s.q)}${s.auto ? `\n정답: ${esc(s.answerText)}${s.topWrongText ? `\n가장 많이 고른 오답: ${esc(s.topWrongText)} (${s.choice ? s.picks[s.topWrong] : s.topWrongN}명)` : ''}` : ''}</div>`).join('') || '<div class="sm">아직 응시한 학생이 없어요.</div>';
   else if (P.rtab === 'trash') {
     const tr = Object.entries(P.trash || {}).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
     body = `<div class="sm">지운 학생은 여기에 모입니다. <b>되살리기</b>를 누르면 답안·점수·이탈 기록이 그대로 돌아옵니다. <b>휴지통 비우기</b>를 누르면 완전히 지워집니다.</div>
       <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>지운 시각</th><th></th></tr>
-      ${tr.map(([sid, t]) => `<tr><td>${esc((t.who || {}).cls || '')}</td><td>${esc(sid)}</td><td>${esc((t.who || {}).name || '')}${testPill(sid)}</td><td>${hhmmss(t.at)}</td><td style="text-align:right"><button class="mini ok" data-a="trash-back" data-sid="${esc(sid)}">되살리기</button></td></tr>`).join('') || '<tr><td colspan="5">휴지통이 비어 있습니다.</td></tr>'}</table></div>
+      ${tr.map(([k, t]) => { const sid = trashSid(k, t); return `<tr><td>${esc((t.who || {}).cls || '')}</td><td>${esc(sid)}</td><td>${esc((t.who || {}).name || '')}${testPill(sid)}</td><td>${hhmmss(t.at)}</td><td style="text-align:right"><button class="mini ok" data-a="trash-back" data-k="${esc(k)}">되살리기</button></td></tr>`; }).join('') || '<tr><td colspan="5">휴지통이 비어 있습니다.</td></tr>'}</table></div>
       ${tr.length ? '<div class="row"><button class="btn s gh" style="color:var(--red)" data-a="trash-empty">휴지통 비우기</button></div>' : ''}`;
   }
   else body = `<div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th class="num">횟수</th><th>시각</th></tr>
@@ -822,7 +838,7 @@ function tabResult() {
 on('r-tab', el => { P.rtab = el.dataset.t; tabResult(); });
 on('csv', () => {
   const { sheet, rows } = resultRows(), m = meta();
-  const took = C.ranked(rows.filter(r => r.took)), absent = rows.filter(r => !r.took).sort((a, b) => String(a.cls).localeCompare(String(b.cls)) || a.sid.localeCompare(b.sid));
+  const took = C.ranked(rows.filter(r => r.took && !r.test)), absent = rows.filter(r => !r.took && !r.test).sort((a, b) => String(a.cls).localeCompare(String(b.cls)) || a.sid.localeCompare(b.sid));
   const head = ['순위', '반', '학번', '이름', '총점', '만점', '자동 채점', '장문형', '답한 문항', '이탈 횟수', '이탈 시각', '카메라 경고', '잠금 횟수', '풀이 시간(초)', '시작', '제출', ...sheet.map((q, i) => `${i + 1}번(${q.pts}점)`)];
   const line = r => [r.rank || '', r.cls, r.sid, r.name, r.took ? r.total : '미응시', r.max, r.took ? r.mc : '', r.took ? r.essay : '', r.took ? r.answered : '', r.lv.count || '', r.lv.list.filter(isLeave).map(e => hhmmss(e.at)).join(' '), r.lv.face || '', r.lv.locks || '', r.took ? Math.round(totalTime(r.a)) : '', r.took ? hhmmss(r.a.startedAt) : '', r.took && r.a.submittedAt ? hhmmss(r.a.submittedAt) : '', ...sheet.map(q => (r.took ? (r.per[q.id].graded === false ? '채점 전' : r.per[q.id].pts) : ''))];
   download(`${(m.title || '시험').replace(/[\\/:*?"<>|]/g, '_')}_결과.csv`, C.toCSV([head, ...took.map(line), ...absent.map(line)]));
@@ -889,7 +905,7 @@ function studentItems(r, sheet, key) {
 const okText = it => (it.q.k === 'long' ? (it.graded ? (it.ok ? '만점' : '감점') : '채점 전') : it.ok ? '맞음' : (it.mine ? '틀림' : '안 풂'));
 on('stu-detail', el => showDetail(el.dataset.sid));
 function showDetail(sid, onlyWrong = false) {
-  const { sheet, key, rows } = resultRows(), r = C.ranked(rows.filter(x => x.took)).find(x => x.sid === sid);
+  const { sheet, key, rows } = resultRows(), r = C.ranked(rows.filter(x => x.took && x.test === isTest(sid))).find(x => x.sid === sid);
   if (!r) return;
   const items = studentItems(r, sheet, key), wrong = items.filter(it => it.ok !== true), list = onlyWrong ? wrong : items;
   modal(`<div class="edbar"><h2>${esc(r.cls)} ${esc(r.sid)} ${esc(r.name)}</h2><button class="btn s gh" data-a="pdf-one" data-sid="${esc(sid)}">이 학생 PDF</button><button class="btn s gh" data-a="modal-close">닫기</button></div>
@@ -926,8 +942,8 @@ function printStudent(r, sheet, key, m) {
 }
 function printData() {
   const { sheet, key, rows } = resultRows(), m = meta();
-  const took = C.ranked(rows.filter(r => r.took)).filter(r => !P.cls || r.cls === P.cls);   // 등수는 전체 기준, 보이는 반만 출력
-  const absent = rows.filter(r => !r.took && (!P.cls || r.cls === P.cls));
+  const took = C.ranked(rows.filter(r => r.took && !r.test)).filter(r => !P.cls || r.cls === P.cls);   // 등수는 전체 기준, 보이는 반만 출력 (테스트 학생 제외)
+  const absent = rows.filter(r => !r.took && !r.test && (!P.cls || r.cls === P.cls));
   return { sheet, key, m, took, absent };
 }
 on('pdf-one', el => { const d = printData(), r = d.took.find(x => x.sid === el.dataset.sid); if (r) doPrint(printStudent(r, d.sheet, d.key, d.m), `${fileName(d.m.title)}_${r.sid}_${r.name}`); });
@@ -952,44 +968,83 @@ on('pdf-all', () => {
 });
 
 /* ================= 학생 지우기 · 휴지통 · 테스트 학생 정리 ================= */
-// 지운 학생은 이 시험의 휴지통으로 옮깁니다(언제든 되살릴 수 있음). Ctrl+Z 로 바로 되돌릴 수도 있습니다.
+// 지운 학생은 이 시험의 휴지통으로 옮기고, 입장도 함께 취소합니다(학생 기기가 기록을 다시 만들지 않게).
+// 휴지통은 지울 때마다 새 칸에 넣어, 같은 학번을 여러 번 지워도 앞의 기록이 덮이지 않습니다.
+const trashSid = (key, t) => (t && t.sid) || String(key).split('_')[0];
 on('stu-del', async el => {
-  const id = P.id, sid = el.dataset.sid, w = whoOf(sid) || {}, m = meta();
-  const [a, es] = await Promise.all([be.get(`answers/${id}/${sid}`), be.get(`essay/${id}/${sid}`)]);
-  if (!a && !es) return toast('지울 기록이 없어요.');
-  const busy = a && a.startedAt && !a.submittedAt && m.status === 'running';
-  if (!(await confirmBox(`${w.name || sid} 학생을 지울까요?`, `${esc(w.cls || '')} ${esc(sid)} ${esc(w.name || '')} 학생의 답안, 점수, 이탈 기록이 이 시험 결과에서 빠지고 <b>휴지통</b>으로 갑니다. 휴지통에서 언제든 되살릴 수 있습니다.${busy ? '\n\n<b>이 학생은 지금 시험을 보는 중입니다.</b> 지우면 지금까지의 답이 결과에서 빠집니다.' : ''}`, '지우기', { danger: true }))) return;
-  const rec = { answers: a || null, essay: es || null, who: { name: w.name || '', cls: w.cls || '' }, at: be.now() };
-  await record(`${w.name || sid} 학생 지우기`,
-    () => be.update('', { [`answers/${id}/${sid}`]: null, [`essay/${id}/${sid}`]: null, [`trash/${id}/${sid}`]: rec }),
-    () => be.update('', { [`answers/${id}/${sid}`]: a || null, [`essay/${id}/${sid}`]: es || null, [`trash/${id}/${sid}`]: null }));
-  closeModal(); toast('지웠어요. 휴지통에 있습니다.', 7000, { label: '되돌리기 (Ctrl+Z)', fn: () => histUndo() });
+  const id = P.id, sid = el.dataset.sid, w = whoOf(sid) || {}, m = meta(), cur = P.answers[sid];
+  if (cur && cur.startedAt && !cur.submittedAt && m.status === 'running' && !isTest(sid)) return toast('시험을 보는 중인 학생은 지울 수 없어요. 제출하거나 시험이 끝난 뒤에 지우세요.', 5000);
+  if (!(await confirmBox(`${w.name || sid} 학생을 지울까요?`, `${esc(w.cls || '')} ${esc(sid)} ${esc(w.name || '')} 학생의 답안, 점수, 이탈 기록이 이 시험 결과에서 빠지고 <b>휴지통</b>으로 갑니다. 입장도 함께 취소됩니다. 휴지통에서 언제든 되살릴 수 있습니다.${['open', 'running'].includes(m.status) ? '\n\n시험이 아직 열려 있어서, 이 학생이 다시 입장하면 처음부터 다시 볼 수 있습니다.' : ''}`, '지우기', { danger: true }))) return;
+  let key = '';
+  await record(`${w.name || sid} 학생 지우기`, async () => {
+    const [a, es] = await Promise.all([be.get(`answers/${id}/${sid}`), be.get(`essay/${id}/${sid}`)]);   // 확인한 뒤의 최신 기록
+    if (!a && !es) throw new Error('지울 기록이 없어요.');
+    key = `${sid}_${be.now()}`;
+    const u = { [`answers/${id}/${sid}`]: null, [`essay/${id}/${sid}`]: null, [`bind/${sid}`]: null,
+      [`trash/${id}/${key}`]: { sid, answers: a || null, essay: es || null, who: { name: w.name || '', cls: w.cls || '' }, at: be.now() } };
+    for (const [k, v] of Object.entries(users)) if (v && v.sid === sid) u['users/' + k] = null;
+    await be.update('', u);
+  }, async () => {
+    if (await be.get(`answers/${id}/${sid}`)) throw new Error('그 사이에 이 학생의 새 기록이 생겨 되돌리지 않았어요. 휴지통에서 확인해 주세요.');
+    const t = await be.get(`trash/${id}/${key}`); if (!t) throw new Error('휴지통에서 이미 비워져 되돌릴 수 없어요.');
+    await be.update('', { [`answers/${id}/${sid}`]: t.answers || null, [`essay/${id}/${sid}`]: t.essay || null, [`trash/${id}/${key}`]: null });
+  });
+  closeModal(); toast('지웠어요. 휴지통에 있습니다.', 7000, { label: '되돌리기', fn: () => histUndo() });
 });
 on('trash-back', async el => {
-  const id = P.id, sid = el.dataset.sid, t = (P.trash || {})[sid]; if (!t) return;
-  if (await be.get(`answers/${id}/${sid}`)) return toast('같은 학번의 기록이 이미 있어 되살릴 수 없어요. 그 기록을 먼저 지워 주세요.', 5000);
-  await record(`${(t.who || {}).name || sid} 학생 되살리기`,
-    () => be.update('', { [`answers/${id}/${sid}`]: t.answers || null, [`essay/${id}/${sid}`]: t.essay || null, [`trash/${id}/${sid}`]: null }),
-    () => be.update('', { [`answers/${id}/${sid}`]: null, [`essay/${id}/${sid}`]: null, [`trash/${id}/${sid}`]: t }));
-  toast('되살렸어요.');
+  const id = P.id, key = el.dataset.k, t = (P.trash || {})[key]; if (!t) return;
+  const sid = trashSid(key, t);
+  const [a, es] = await Promise.all([be.get(`answers/${id}/${sid}`), be.get(`essay/${id}/${sid}`)]);
+  let swap = '', curRec = null;
+  if (a || es) {   // 같은 학번의 기록이 이미 있으면 서로 바꿉니다 — 지금 기록도 휴지통에 남아 아무것도 사라지지 않음
+    if (!(await confirmBox('같은 학번의 기록이 이미 있어요', `${esc(sid)} 학생의 지금 기록을 휴지통의 기록으로 바꿀까요? 지금 기록은 휴지통으로 옮겨 둡니다(지워지지 않음).`, '바꾸기'))) return;
+    swap = `${sid}_${be.now()}`; curRec = { sid, answers: a || null, essay: es || null, who: (a && a.who) || t.who || null, at: be.now() };
+  }
+  await record(`${(t.who || {}).name || sid} 학생 되살리기`, async () => {
+    const u = { [`answers/${id}/${sid}`]: t.answers || null, [`essay/${id}/${sid}`]: t.essay || null, [`trash/${id}/${key}`]: null };
+    if (swap) u[`trash/${id}/${swap}`] = curRec;
+    await be.update('', u);
+  }, async () => {
+    const now = await be.get(`answers/${id}/${sid}/startedAt`);
+    if ((now || null) !== ((t.answers && t.answers.startedAt) || null)) throw new Error('그 사이에 기록이 바뀌어 되돌리지 않았어요.');
+    const u = { [`answers/${id}/${sid}`]: swap ? curRec.answers : null, [`essay/${id}/${sid}`]: swap ? curRec.essay : null, [`trash/${id}/${key}`]: t };
+    if (swap) u[`trash/${id}/${swap}`] = null;
+    await be.update('', u);
+  });
+  toast(swap ? '바꿨어요. 원래 있던 기록은 휴지통에 있습니다.' : '되살렸어요.');
 });
 on('trash-empty', async () => {
-  const id = P.id, all = P.trash || {}, n = Object.keys(all).length; if (!n) return;
-  if (!(await confirmBox('휴지통을 비울까요?', `휴지통의 ${n}명이 <b>완전히 지워집니다.</b> 이 탭을 닫으면 되살릴 수 없습니다.`, '비우기', { danger: true }))) return;
-  await record(`휴지통 비우기 (${n}명)`, () => be.set('trash/' + id, null), () => be.set('trash/' + id, all));
+  const id = P.id, all = { ...(P.trash || {}) }, n = Object.keys(all).length; if (!n) return;
+  if (!(await confirmBox('휴지통을 비울까요?', `휴지통의 ${n}건이 <b>완전히 지워집니다.</b> 바로 뒤라면 되돌리기로 되살릴 수 있지만, 새로 고치거나 화면을 바꾸면 되살릴 수 없습니다.`, '비우기', { danger: true }))) return;
+  const paths = v => Object.fromEntries(Object.keys(all).map(k => [`trash/${id}/${k}`, v === null ? null : all[k]]));
+  await record(`휴지통 비우기 (${n}건)`, () => be.update('', paths(null)), () => be.update('', paths(1)));   // 비운 칸만 되살림(그 뒤에 들어온 것은 그대로)
 });
 // 교수 기기에서 만든 테스트 학생(학번이 TEST로 시작)을 모든 시험에서 한 번에 정리합니다
-on('test-clean', async () => {
-  const again = !!$('peopleBox');   // 확인 창이 학생 목록을 닫으므로, 끝나면 다시 엽니다
+async function testPlan() {
   const [allAns, allEssay] = await Promise.all([be.get('answers'), be.get('essay')]);
   const del = {}, back = {}; let n = 0;
   for (const [k, v] of Object.entries(users)) if (v && isTest(v.sid)) { del['users/' + k] = null; back['users/' + k] = v; }
   for (const [sid, uid] of Object.entries(bind)) if (isTest(sid)) { del['bind/' + sid] = null; back['bind/' + sid] = uid; }
   for (const [e, mm] of Object.entries(allAns || {})) for (const [sid, a] of Object.entries(mm || {})) if (isTest(sid)) { del[`answers/${e}/${sid}`] = null; back[`answers/${e}/${sid}`] = a; n++; }
   for (const [e, mm] of Object.entries(allEssay || {})) for (const [sid, v] of Object.entries(mm || {})) if (isTest(sid)) { del[`essay/${e}/${sid}`] = null; back[`essay/${e}/${sid}`] = v; }
-  if (!Object.keys(del).length) return toast('정리할 테스트 학생이 없어요.');
-  if (!(await confirmBox('테스트 학생을 정리할까요?', `학번이 TEST로 시작하는 학생의 입장 기록과 모든 시험의 답안 ${n}건을 지웁니다. 실제 학생은 그대로입니다. 바로 뒤라면 Ctrl+Z 로 되돌릴 수 있습니다.`, '정리', { danger: true }))) return;
-  await record('테스트 학생 정리', () => be.update('', del), () => be.update('', back));
-  toast('정리했어요.', 7000, { label: '되돌리기 (Ctrl+Z)', fn: () => histUndo() });
+  return { del, back, n };
+}
+on('test-clean', async () => {
+  const again = !!$('peopleBox');   // 확인 창이 학생 목록을 닫으므로, 끝나면 다시 엽니다
+  const first = await testPlan();
+  if (!Object.keys(first.del).length) return toast('정리할 테스트 학생이 없어요.');
+  if (!(await confirmBox('테스트 학생을 정리할까요?', `학번이 TEST로 시작하는 학생의 입장 기록과 모든 시험의 답안 ${first.n}건을 지웁니다. 실제 학생은 그대로입니다. 바로 뒤라면 되돌리기로 되살릴 수 있습니다.`, '정리', { danger: true }))) return;
+  let back = {};
+  await record('테스트 학생 정리', async () => {
+    const plan = await testPlan(); back = plan.back;   // 확인한 뒤의 최신 기록
+    if (Object.keys(plan.del).length) await be.update('', plan.del);
+  }, async () => {
+    const cur = await Promise.all(Object.keys(back).map(async p => [p, await be.get(p)]));
+    const u = {}; let kept = 0;
+    for (const [p, v] of cur) { if (v == null) u[p] = back[p]; else kept++; }   // 그 사이에 새로 생긴 기록은 덮지 않음
+    if (Object.keys(u).length) await be.update('', u);
+    if (kept) toast(`${kept}건은 그 사이에 새 기록이 있어 그대로 두었어요.`, 5000);
+  });
+  toast('정리했어요.', 7000, { label: '되돌리기', fn: () => histUndo() });
   if (again) document.querySelector('[data-a=people]')?.click();
 });

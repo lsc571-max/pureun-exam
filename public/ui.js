@@ -4,6 +4,7 @@ export const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '
 export const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥'];
 
 let toastT = 0, toastFn = null;
+export function hideToast() { clearTimeout(toastT); toastFn = null; $('toast').hidden = true; }
 // action: { label, fn } 을 주면 알림 안에 누를 수 있는 버튼이 생깁니다 (예: 되돌리기)
 export function toast(msg, ms = 2600, action = null) {
   const t = $('toast'); toastFn = action ? action.fn : null;

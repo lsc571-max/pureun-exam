@@ -204,11 +204,13 @@ pre.code{background:var(--bg);border:1px solid var(--line);border-radius:12px;pa
 td.pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:260px}
 /* 되돌리기 · 다시 하기 */
 .desk header .undoredo{display:inline-flex;gap:4px}
-.desk header .undoredo button{font-size:18px;line-height:1;padding:6px 10px}
+.desk header .undoredo button{font-size:20px;line-height:1;min-width:42px;min-height:40px;padding:6px 10px}
+/* 휴대폰: 머리말을 위에 붙여 두지 않음(화면을 많이 차지하므로) */
+@media(max-width:560px){.desk header{position:static}}
 .desk header .undoredo button:disabled{opacity:.35}
 /* 테스트 학생 화면 띠 */
 .testband{align-self:stretch;background:var(--blue-soft);color:#24609f;border-radius:12px;padding:8px 12px;font-size:13px;font-weight:700;text-align:center}
-[data-a="brand"]{cursor:default;-webkit-user-select:none;user-select:none}
+[data-a="brand"]{cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none}   /* 아이폰에서도 눌림이 전달되게 */
 /* AI 부탁문 묶음 */
 .ask{background:var(--blue-soft);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:9px}
 .ask-t{font-weight:900;font-size:15px;color:#24609f}.ask-t span{font-weight:500;font-size:13px;margin-left:6px;opacity:.85}

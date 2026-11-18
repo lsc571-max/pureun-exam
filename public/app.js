@@ -18,7 +18,8 @@ const CONFIG = {
 const Q = new URLSearchParams(location.search);
 const MOCK = Q.has('mock') && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 // ?test=번호 : 교수 기기에서 여는 '테스트 학생' 화면. 교수 로그인과 따로, 이 탭에만 학생 로그인을 둡니다.
-const TEST = /^\d{1,3}$/.test(Q.get('test') || '') ? Q.get('test') : '';
+// 테스트 학생 화면은 교수님이 로그인한 기기에서만 열립니다 (실제 학생이 주소만 바꿔 두 번째 이름을 얻지 못하게)
+const TEST = /^\d{1,4}$/.test(Q.get('test') || '') && (() => { try { return localStorage.getItem('pureun:prof') === '1'; } catch (e) { return false; } })() ? Q.get('test') : '';
 const WANT_PROF = Q.has('prof') && !TEST;
 const PROF_HERE = 'pureun:prof';   // 이 기기에서 교수님이 로그인한 적이 있으면 '1' (실제 학생 기기에는 없음)
 const urlFor = q => './?' + [q, MOCK ? 'mock=1' : ''].filter(Boolean).join('&');
@@ -65,17 +66,23 @@ async function boot() {
 }
 on('reload', () => location.reload());
 // 입장이 취소됨: 풀던 답은 이 기기에 남겨 두고(다시 입장하면 이어서 보냄) 입장 화면으로 돌아갑니다
+let cancelPending = false;
 function entryCancelled() {
-  if (X) { flushTyping(); try { X.store.close(false); } catch (e) {} X.done = true; stopExam(); }
+  if (X && X.done) { cancelPending = true; return; }   // 제출하는 중이면 제출을 마친 뒤에 입장 화면으로
+  const me = S.me, inExam = !!X;
+  if (X) { flushTyping(); try { saveTime(); } catch (e) {} try { X.store.close(false); } catch (e) {} X.done = true; stopExam(); }
   closeModal(); clearInterval(noticeT); S.me = null; view = ''; N = null; R = null;
-  viewEntry('입장이 취소되었습니다. 반·학번·이름을 다시 입력해 입장해 주세요. 풀던 답은 이 기기에 남아 있어 이어서 풀 수 있습니다.');
+  if (me) entryCls = me.cls;
+  viewEntry(`입장이 취소되었습니다. 입장을 다시 누르면 들어갈 수 있습니다.${inExam ? ' 풀던 답은 이 기기에 남아 있어, 같은 학번으로 다시 들어가면 이어서 보냅니다. 시험 시간은 그동안에도 흐릅니다.' : ''}`);
+  if (me && $('e-sid')) { $('e-sid').value = me.sid; $('e-name').value = me.name; }   // 다시 입력하지 않아도 되게
 }
+on('to-prof', () => { if (X) { flushTyping(); try { saveTime(); } catch (e) {} } location.href = urlFor('prof=1'); });
 // 테스트 학생 화면 맨 위 띠
 const testRibbon = () => (TEST ? `<div class="testband">테스트 학생 ${TEST} · 실제 학생처럼 기록됩니다 · '푸른시험'을 5번 누르면 교수 화면</div>` : '');
 // '푸른시험' 글자를 5번 빠르게 누르면 교수 화면 ↔ 테스트 학생 화면 (교수님이 로그인한 적 있는 기기에서만)
 let brandN = 0, brandT = 0;
 on('brand', () => {
-  if (LS.get(PROF_HERE) !== '1' || (X && !X.done)) return;
+  if (LS.get(PROF_HERE) !== '1' || (X && !X.done && !TEST)) return;
   const now = Date.now(); brandN = now - brandT < 1500 ? brandN + 1 : 1; brandT = now;
   if (brandN < 5) return;
   brandN = 0;
@@ -83,7 +90,8 @@ on('brand', () => {
 });
 // 테스트 학생 번호: 새로 받을 때마다 하나씩 올립니다. 이 탭에서 오가는 테스트 학생은 늘 같은 번호(같은 학생)입니다.
 const SS = { get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) {} } };
-const newSlot = () => { const n = (+(LS.get('pureun:slot') || 0) || 0) % 999 + 1; LS.set('pureun:slot', String(n)); return String(n); };
+// 번호는 무작위로 정합니다 (교수님의 PC와 휴대폰이 같은 번호를 내지 않게)
+const newSlot = () => String(1000 + Math.floor(Math.random() * 9000));
 const mySlot = () => SS.get('pureun:myslot') || (s => (SS.set('pureun:myslot', s), s))(newSlot());
 if (TEST) SS.set('pureun:myslot', TEST);
 // 교수 화면의 '학생으로 테스트': 새 탭마다 새 테스트 학생
@@ -99,7 +107,6 @@ function viewProfLogin(msg = '') {
     ${msg ? `<div class="box no">${esc(msg)}</div>` : ''}
     <button class="btn am" style="flex:none" data-a="glogin">Google 계정으로 로그인</button>
     <a class="link" href="./">학생 화면으로</a>`, true);
-  LS.set(PROF_HERE, '1');   // 교수용 주소를 연 기기
 }
 on('glogin', async () => { try { await be.signInGoogle(); } catch (e) { toast('로그인하지 못했어요. 팝업 차단을 확인해 주세요.'); } });
 
@@ -168,7 +175,7 @@ const deadline = (m, startedAt, until) => Math.min(m.endAt, until || (startedAt 
 const pracOpen = m => !!m.practice && (m.status === 'draft' || m.status === 'ended');
 function viewHome() {
   view = 'home';
-  const list = Object.entries(S.exams).filter(([, m]) => m && (m.status !== 'draft' || pracOpen(m))).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+  const list = Object.entries(S.exams).filter(([, m]) => m && (['open', 'running', 'ended'].includes(m.status) || pracOpen(m))).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
   const card = ([id, m]) => {
     const exam = m.status !== 'draft';
     const over = isOver(m);
@@ -301,7 +308,7 @@ async function startExam() {
     X.tick = setInterval(tick, 500);
     app.classList.add('lock');
     try { if (APP && APP.startLock) APP.startLock(); } catch (e) {}
-    try { history.pushState({ exam: 1 }, ''); } catch (e) {}   // 뒤로 가기로 시험 화면을 벗어나지 않게
+    if (!TEST) try { history.pushState({ exam: 1 }, ''); } catch (e) {}   // 뒤로 가기로 시험 화면을 벗어나지 않게
     keepAwake();
     view = 'exam'; renderExam(); tick();
     if (S.exams[id].cam) {
@@ -323,7 +330,7 @@ function stopExam() {
   X = null;
 }
 // 뒤로 가기: 시험 중에는 화면을 벗어나지 않고, 열려 있는 창만 닫습니다
-window.addEventListener('popstate', () => { if (X && !X.done) { try { history.pushState({ exam: 1 }, ''); } catch (e) {} closeZoom(); if (!$('modal').hidden) closeModal(); } });
+window.addEventListener('popstate', () => { if (X && !X.done && !TEST) { try { history.pushState({ exam: 1 }, ''); } catch (e) {} closeZoom(); if (!$('modal').hidden) closeModal(); } });
 function examMetaChanged() { if (X && !X.done) tick(); }
 function tick() {
   if (!X || X.done) return;
@@ -349,7 +356,7 @@ function renderExam() {
   if (X.curQ !== q.id) { saveTime(); X.curQ = q.id; X.qStart = paused() ? 0 : Date.now(); }
   sessionStorage.setItem('idx:' + X.id, X.idx);
   const body = answerHtml(q, o, a);
-  app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span>${S.exams[X.id] && S.exams[X.id].cam ? '<span class="watch"><i></i>부정행위 감시 중</span>' : ''}<span class="clock" id="clock">--:--</span></div>
+  app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span>${TEST ? '<button data-a="to-prof">교수 화면</button>' : ''}${S.exams[X.id] && S.exams[X.id].cam ? '<span class="watch"><i></i>부정행위 감시 중</span>' : ''}<span class="clock" id="clock">--:--</span></div>
     <div class="prog"><i style="width:${(X.idx + 1) / n * 100}%"></i></div>
     <div class="body split"><div class="qa"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, X.imgs)}</div><div class="qb">${body}<div class="save" id="save" style="margin-top:auto"></div></div></div>
     <div class="foot"><button class="btn gh" data-a="prev" ${X.idx ? '' : 'disabled'}>이전</button><button class="btn gh" data-a="qlist">문항 목록</button>${X.idx < n - 1 ? '<button class="btn" data-a="next">다음</button>' : '<button class="btn am" data-a="qlist">제출</button>'}</div></div>`;
@@ -551,6 +558,7 @@ document.addEventListener('keydown', e => {
 
 /* ================= 학생: 마무리 쪽 ================= */
 function viewDone() {
+  if (cancelPending) { cancelPending = false; view = 'done'; return entryCancelled(); }
   view = 'done';
   const m = S.exams[N.id] || {}, e = m.end || {}, my = N.my || {};
   const cnt = Object.values(my.a || {}).filter(v => v !== '' && v != null).length;

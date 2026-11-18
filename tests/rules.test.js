@@ -211,6 +211,7 @@ test('답안: 시작 전·종료 후·제출 후에는 못 고친다', async () 
   await seed({ 'exams/late': { status: 'running', startAt: 1, endAt: Date.now() - 60000 } });
   await assertFails(ans('u1', 'late').child('a/q1').set(1));   // 시간이 지남(교수가 종료를 안 눌러도)
   await seed({ 'exams/grace': { status: 'running', startAt: 1, endAt: Date.now() - 3000 } });
+  await assertSucceeds(begin('u1', 'grace'));
   await assertSucceeds(ans('u1', 'grace').update({ 'a/q1': 1, submittedAt: Date.now() })); // 자동 제출 여유 20초
   await begin('u1', 'run');
   await assertFails(ans('u1', 'run').update({ submittedAt: 9 }));             // 엉뚱한 제출 시각
@@ -292,6 +293,19 @@ test('휴지통: 교수만 쓰고 읽으며, 지운 학생을 예전 시각 그�
   await assertFails(stu('u1').ref(`trash/run/${A}`).set({ x: 1 }));
   await assertSucceeds(prof().ref().update({ [`answers/run/${A}`]: old, [`trash/run/${A}`]: null })); // 되살리기
   await assertFails(ans('u1', 'run').child('startedAt').set(Date.now() - 5 * 3600000));          // 학생은 예전 시각을 못 씀
+});
+
+test('시작 기록이 없으면 답·시간·이탈·제출을 쓸 수 없다 (지워진 학생의 기기가 빈 기록을 다시 만들지 않게)', async () => {
+  await enter('u1', A, '홍길동', 'A반');
+  await assertFails(ans('u1', 'run').child('a/q1').set(1));
+  await assertFails(ans('u1', 'run').child('tm/q1').set(3));
+  await assertFails(ans('u1', 'run').child('ev').push({ t: 'leave', at: Date.now() }));
+  await assertFails(ans('u1', 'run').child('submittedAt').set(Date.now()));
+  await assertSucceeds(begin('u1', 'run'));
+  await assertSucceeds(ans('u1', 'run').child('a/q1').set(1));
+  await assertSucceeds(prof().ref(`answers/run/${A}`).remove());                 // 교수가 지움
+  await assertFails(ans('u1', 'run').child('a/q1').set(2));                      // 기기가 계속 써도 거절
+  await assertFails(ans('u1', 'run').child('tm/q1').set(9));
 });
 
 test('장문형 점수: 공개 뒤 자기 것만 읽고, 학생은 못 쓴다', async () => {

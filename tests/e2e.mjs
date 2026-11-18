@@ -166,6 +166,7 @@ try {
     await prof.mouse.move(g.x, t.y + (after ? t.height - 4 : 4), { steps: 4 });
     await prof.mouse.up();
   };
+  await prof.evaluate(() => { document.querySelector('.desk').scrollTop = 320; });   // 문항 목록이 화면 안에 오게
   await drag(4, 0, false);   // 서술 문제(5번째)를 첫째 문제 앞으로
   await prof.waitForFunction(() => /서술 문제/.test(document.querySelector('.qrow[data-i="0"]').textContent));
   assert.deepEqual((await pages(prof, exId)).map(p => p.q), ['서술 문제', ...QS.slice(0, 4)]);
@@ -315,6 +316,7 @@ try {
   say('입장 취소: 학생 화면이 껐다 켜지 않아도 바로 입장 화면으로 돌아가고, 다시 들어올 수 있다');
   await prof.click('#pmain tr:has-text("홍길동") [data-a="unbind"]'); await act(prof, 'dlg-yes');
   await stu.waitForFunction(() => /입장이 취소되었습니다/.test(document.body.textContent) && document.getElementById('e-sid'), null, { timeout: 8000 });
+  assert.equal(await stu.inputValue('#e-sid'), '20261234', '입장 취소 뒤 학번을 다시 써야 함'); assert.equal(await stu.inputValue('#e-name'), '홍길동');
   await act(stu, 'cls', '[data-c="A반"]'); await stu.fill('#e-sid', '20261234'); await stu.fill('#e-name', '홍길동'); await act(stu, 'enter');
   await stu.waitForSelector('[data-a="open-exam"]');
   assert.match(await stu.textContent('.who'), /A반 20261234 홍길동/);
@@ -402,6 +404,9 @@ try {
   await prof.waitForFunction(() => /응시 중/.test(document.getElementById('pmain').textContent) && /5 \/ 5/.test(document.getElementById('pmain').textContent));
   await prof.waitForSelector('[data-a="lv-show"]');
   await prof.waitForSelector('.donut'); await prof.waitForSelector('.hist');
+  await prof.click('#pmain tr:has-text("홍길동") [data-a="stu-del"]');            // 시험 보는 중인 학생은 지울 수 없음
+  await prof.waitForFunction(() => /시험을 보는 중인 학생은 지울 수 없어요/.test(document.getElementById('toast').textContent));
+  assert.ok((await db(prof)).answers[exId]['20261234'].startedAt, '시험 중인 학생이 지워짐');
   assert.match(await prof.textContent('#pmain [data-dl]'), /^0[0-5]:\d\d$/, '학생별 남은 시간이 보이지 않음');
   say('시험 중 띠: 다른 탭에서도 진행 상황이 보이고, 누르면 진행 탭으로 간다');
   await act(prof, 'p-tab', '[data-t="edit"]');
@@ -527,7 +532,7 @@ try {
   await act(prof, 'dlg-yes');
   await prof.waitForFunction(() => !/김철수/.test(document.getElementById('pmain').textContent));
   d = await db(prof);
-  assert.ok(!d.answers[exId]['20261301'], '지웠는데 답안이 남아 있음'); assert.ok(d.trash[exId]['20261301'].answers.submittedAt > 0, '휴지통에 답안이 없음');
+  assert.ok(!d.answers[exId]['20261301'], '지웠는데 답안이 남아 있음'); assert.ok(Object.values(d.trash[exId]).find(t => t.sid === '20261301').answers.submittedAt > 0, '휴지통에 답안이 없음');
   await prof.click('body', { position: { x: 5, y: 5 } }); await key(prof, 'Control+z');
   await prof.waitForFunction(() => /김철수/.test(document.getElementById('pmain').textContent));
   d = await db(prof); assert.ok(d.answers[exId]['20261301'].submittedAt > 0); assert.ok(!(d.trash && d.trash[exId]), 'Ctrl+Z 뒤에도 휴지통에 남음');
@@ -536,7 +541,7 @@ try {
   await act(prof, 'r-tab', '[data-t="trash"]');
   assert.match(await prof.textContent('#pmain'), /20261301.*김철수/s);
   await shot(prof, 'p12-trash');
-  await act(prof, 'trash-back', '[data-sid="20261301"]');
+  await act(prof, 'trash-back');
   await prof.waitForFunction(() => /휴지통이 비어 있습니다/.test(document.getElementById('pmain').textContent));
   d = await db(prof); assert.ok(d.answers[exId]['20261301'].submittedAt > 0, '휴지통에서 되살리지 못함');
   await act(prof, 'r-tab', '[data-t="rank"]');
