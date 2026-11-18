@@ -220,8 +220,26 @@ try {
   assert.match(await prof.textContent('pre.code'), /\/\* 2번 \*\/.*"a":2/s);
   await act(prof, 'modal-close');
 
+  say('"안드로이드는 앱으로만 응시" 스위치');
+  await act(prof, 'p-tab', '[data-t="run"]'); await act(prof, 'ex-settings'); await prof.click('#s-app'); await act(prof, 's-save');
+  await prof.waitForFunction(() => document.getElementById('modal').hidden);
+  d = await db(prof); assert.equal(d.exams[Object.keys(d.exams)[0]].appOnly, true);
+  const droid = await browser.newContext({ viewport: { width: 412, height: 860 }, userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-S911N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36' });
+  // (다른 브라우저 창이라 가짜 서버 자료를 따로 넣어 줍니다)
+  const dp = await droid.newPage(); await dp.goto(BASE + '/?mock=1');
+  await dp.evaluate(v => localStorage.setItem('mockdb', v), JSON.stringify({ exams: { x1: { title: '앱 전용', minutes: 5, status: 'running', startAt: Date.now(), endAt: Date.now() + 300000, appOnly: true, n: 1 } } }));
+  await dp.reload(); await dp.waitForSelector('#e-sid');
+  assert.match(await dp.textContent('#app'), /안드로이드 앱 내려받기/);
+  await act(dp, 'cls', '[data-c="A반"]'); await dp.fill('#e-sid', '20260001'); await dp.fill('#e-name', '테스트'); await act(dp, 'enter');
+  await dp.waitForSelector('[data-a="open-exam"]'); await act(dp, 'open-exam');
+  await dp.waitForSelector('[data-a="agree"]'); await act(dp, 'agree');
+  assert.ok(await dp.isDisabled('[data-a="start"]'), '앱 전용 시험인데 안드로이드 웹에서 시작이 됨');
+  assert.match(await dp.textContent('#app'), /앱으로만 볼 수 있습니다/);
+  await droid.close();
+  await act(prof, 'ex-settings'); await prof.click('#s-app'); await act(prof, 's-save');   // 나머지 테스트는 웹으로 진행
+  await prof.waitForFunction(() => document.getElementById('modal').hidden);
+
   say('대기실 열기');
-  await act(prof, 'p-tab', '[data-t="run"]');
   await act(prof, 'ex-status', '[data-s="open"]');
   await prof.waitForSelector('[data-a="ex-start"]');
 
@@ -396,15 +414,45 @@ try {
   await prof.waitForSelector('[data-a="ex-end"]');
   d = await db(prof);
   assert.equal(d.exams[exId].status, 'running'); assert.ok(d.exams[exId].endAt > Date.now() + 120000);
-  const late = await ctx.newPage(); watch(late, '늦은 학생');
+  // 늦게 온 학생은 "안드로이드 앱"으로 응시한다고 보고, 앱이 해 주는 일을 흉내 냅니다.
+  const late = await ctx.newPage(); watch(late, '늦은 학생(앱)');
+  await late.addInitScript(() => {
+    const st = window.__app = { dnd: false, auto: false, calls: [] };
+    window.PureunApp = { isDndOn: () => st.dnd, canAutoDnd: () => st.auto, requestDndAccess: () => st.calls.push('requestDndAccess'), startLock: () => st.calls.push('startLock'), stopLock: () => st.calls.push('stopLock') };
+  });
   await enter(late, 'B반', '20261302', '이영희');
   await late.waitForSelector('[data-a="open-exam"]'); await act(late, 'open-exam');
-  await late.waitForSelector('[data-a="agree"]'); await act(late, 'agree'); await act(late, 'start');
-  await late.waitForSelector('#clock');                                                   // 못 본 학생은 응시 가능
+  await late.waitForSelector('[data-a="agree"]'); await act(late, 'agree');
+  say('앱: 방해 금지를 켤 수 없으면 시작 버튼이 눌리지 않는다');
+  assert.ok(await late.isDisabled('[data-a="start"]'), '방해 금지가 꺼져 있는데 시작이 됨');
+  await act(late, 'dnd');
+  assert.deepEqual(await late.evaluate(() => window.__app.calls), ['requestDndAccess']);
+  await late.evaluate(() => { window.__app.auto = true; });          // 학생이 허용하고 돌아옴
+  await late.waitForFunction(() => !document.querySelector('[data-a="start"]').disabled, null, { timeout: 5000 });
+  assert.match(await late.textContent('#app'), /자동으로 켜지고/);
+  await act(late, 'start');
+  await late.waitForSelector('#clock');                                // 못 본 학생은 응시 가능
+  assert.ok((await late.evaluate(() => window.__app.calls)).includes('startLock'), '시험 시작 때 화면 고정을 요청하지 않음');
+  say('앱: 화면 고정이 풀리면 기록되고, 다시 고정할 때까지 문제가 가려진다');
+  await late.evaluate(() => window.onPureunEvent('unpin'));
+  await late.waitForSelector('#guard:not([hidden]) [data-a="repin"]');
+  await late.evaluate(() => window.onPureunEvent('back'));             // 앱으로 돌아오기만 해서는 가림이 안 풀림
+  assert.ok(await late.isVisible('[data-a="repin"]'));
+  await act(late, 'repin');
+  assert.equal((await late.evaluate(() => window.__app.calls)).filter(c => c === 'startLock').length, 2);
+  await late.evaluate(() => window.onPureunEvent('pinned'));
+  await late.waitForSelector('#guard:not([hidden]) [data-a="guard-ok"]');
+  assert.match(await late.textContent('#guard'), /1회/);
+  await act(late, 'guard-ok');
+  d = await db(prof);
+  assert.deepEqual(Object.values(d.answers[exId]['20261302'].ev).map(e => e.t).sort(), ['back', 'unpin']);
+  assert.match(d.answers[exId]['20261302'].dev, /^app /);
   await stu.reload(); await stu.waitForSelector('[data-a="open-exam"]'); await act(stu, 'open-exam');
   await stu.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent)); // 제출한 학생은 다시 못 풂
-  await late.close();
   await act(prof, 'ex-end'); await act(prof, 'dlg-yes'); await prof.waitForSelector('[data-a="ex-release"]');
+  await late.waitForFunction(() => /시험이 끝났습니다/.test(document.body.textContent));
+  assert.ok((await late.evaluate(() => window.__app.calls)).includes('stopLock'), '시험이 끝났는데 화면 고정·방해 금지를 풀지 않음');
+  await late.close();
   await act(prof, 'p-tab', '[data-t="result"]'); await prof.waitForSelector('[data-a="csv"]');
 
   say('결과 공개 → 학생이 점수와 해설을 본다');

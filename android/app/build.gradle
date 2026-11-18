@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.application'
+}
+
+// 서명 열쇠는 저장소에 없습니다. GitHub Actions 가 비밀값(ANDROID_KEYSTORE_BASE64)에서 꺼내
+// android/pureun-exam.p12 로 놓아 줍니다. 비밀값이 없으면 그 빌드만 쓰는 임시 열쇠를 만듭니다.
+// 열쇠 파일 자체가 비밀이므로, 파일을 여는 암호는 고정된 값을 씁니다.
+def KEY_PASS = 'pureun-exam'
+def buildNo = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
+
+android {
+    namespace 'kr.pureun.exam'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'kr.pureun.exam'
+        minSdk 24
+        targetSdk 34
+        versionCode buildNo
+        versionName "1.0.${buildNo}"
+    }
+    signingConfigs {
+        release {
+            storeFile file('../pureun-exam.p12')
+            storeType 'pkcs12'
+            storePassword KEY_PASS
+            keyAlias 'pureun'
+            keyPassword KEY_PASS
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { abortOnError false; checkReleaseBuilds false }
+}

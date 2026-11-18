@@ -189,7 +189,7 @@ function tabRun() {
     <div class="panel"><div class="row"><h2 style="margin-right:auto">학생별 현황</h2>${clsFilter()}</div>
       <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>상태</th><th class="num">답한 문항</th><th class="num">이탈</th><th></th></tr>
       ${rows.map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}</td>
-        <td>${r.a && r.a.submittedAt ? `<span class="pill ok">제출 ${hhmmss(r.a.submittedAt)}</span>` : r.a && r.a.startedAt ? '<span class="pill blue">응시 중</span>' : '<span class="pill mid">입장</span>'}</td>
+        <td>${r.a && r.a.submittedAt ? `<span class="pill ok">제출 ${hhmmss(r.a.submittedAt)}</span>` : r.a && r.a.startedAt ? '<span class="pill blue">응시 중</span>' : '<span class="pill mid">입장</span>'}${r.a && r.a.dev ? ` <span class="pill">${r.a.dev.startsWith('app') ? '앱' : '웹'}</span>` : ''}</td>
         <td class="num">${r.a ? `${r.cnt} / ${sheet.length}` : ''}</td>
         <td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td>
         <td style="white-space:nowrap;text-align:right">${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">입장 취소</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button>` : ''}</td></tr>`).join('')}
@@ -267,6 +267,8 @@ on('ex-settings', () => {
     <label class="f">시험 시간(분) ${m.status === 'running' ? '— 진행 중에는 "5분 연장"을 쓰세요' : ''}<input class="in" id="s-min" type="number" min="1" max="300" value="${m.minutes || 50}" ${m.status === 'running' ? 'disabled' : ''}></label>
     <button class="check ${m.practice ? 'on' : ''}" data-a="s-practice" id="s-prac"><i>✓</i>문제풀이(학습) 모드로 공개</button>
     <div class="sm">켜면 입장한 학생이 이 문항을 순서대로 풀며 정답과 해설을 바로 봅니다. 실제 시험 문항에는 켜지 마세요.</div>
+    <button class="check ${m.appOnly ? 'on' : ''}" data-a="s-practice" id="s-app"><i>✓</i>안드로이드는 앱으로만 응시</button>
+    <div class="sm">켜면 안드로이드 휴대폰의 인터넷 창(크롬 등)으로는 시작할 수 없고, 앱 내려받기 안내가 나옵니다. 아이폰은 그대로 웹으로 봅니다.</div>
     <button class="btn" data-a="s-save">저장</button>
     <hr style="border:0;border-top:1px solid var(--line)">
     <button class="btn gh" data-a="ex-wipe">답안 모두 지우기 (모의시험 뒤 초기화)</button>
@@ -275,10 +277,10 @@ on('ex-settings', () => {
 });
 on('s-practice', el => el.classList.toggle('on'));
 on('s-save', async () => {
-  const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), practice = $('s-prac').classList.contains('on');
+  const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), practice = $('s-prac').classList.contains('on'), appOnly = $('s-app').classList.contains('on');
   if (!title || !(minutes >= 1 && minutes <= 300)) return toast('이름과 시간을 확인해 주세요.');
   if (practice && !meta().practice && meta().status !== 'draft' && !(await confirmBox('시험 문항을 문제풀이로 공개할까요?', '학생이 정답과 해설을 모두 볼 수 있게 됩니다.', '공개', { danger: true }))) return;
-  await setMeta({ title, minutes, practice }); closeModal(); toast('저장했어요.');
+  await setMeta({ title, minutes, practice, appOnly }); closeModal(); toast('저장했어요.');
 });
 on('ex-wipe', async () => {
   if (!(await confirmBox('답안을 모두 지울까요?', '이 시험의 모든 학생 답안, 이탈 기록, 장문형 점수가 지워지고 시험이 "준비 중"으로 돌아갑니다. <b>되돌릴 수 없습니다.</b>', '모두 지우기', { danger: true }))) return;

@@ -76,7 +76,7 @@ function viewEntry(err = '') {
     ${err ? `<div class="box no">${esc(err)}</div>` : ''}
     <button class="btn am" style="flex:none" data-a="enter">입장</button>
     <div class="sm">학번과 이름을 정확히 입력하세요. 처음 입장한 이 기기에서만 응시할 수 있습니다.</div>
-    <div style="margin-top:auto;text-align:center"><a class="link" href="./?prof=1">교수용</a></div>`, true);
+    <div style="margin-top:auto;text-align:center">${IS_ANDROID && !APP ? `<a class="link" href="${APK_URL}">안드로이드 앱 내려받기</a> · ` : ''}<a class="link" href="./?prof=1">교수용</a></div>`, true);
 }
 // 입력하던 글자를 지우지 않고 화면만 다시 그립니다
 function keepEntry(err = '') { const sid = $('e-sid') ? $('e-sid').value : '', nm = $('e-name') ? $('e-name').value : ''; viewEntry(err); $('e-sid').value = sid; $('e-name').value = nm; }
@@ -130,15 +130,24 @@ on('open-exam', async el => {
   if (m.status === 'running' && my.startedAt && be.now() < m.endAt) return startExam();
   viewNotice();
 });
-const dndOn = () => { try { return !APP || !!APP.isDndOn(); } catch (e) { return true; } };
+const APK_URL = 'https://github.com/lsc571-max/pureun-exam/releases/latest/download/pureun-exam.apk';
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+const appCall = (name, fallback) => { try { return APP && APP[name] ? APP[name]() : fallback; } catch (e) { return fallback; } };
+// 앱에서는 방해 금지가 켜져 있거나, 시작할 때 자동으로 켤 수 있어야 시작 버튼이 눌립니다.
+const dndOn = () => !APP || !!appCall('isDndOn', true) || !!appCall('canAutoDnd', false);
 function viewNotice() {
   view = 'notice';
   const m = S.exams[N.id];
   if (!m || m.status === 'draft') return viewHome();
   if (m.status === 'ended') return viewDone();
   const running = m.status === 'running' && be.now() < m.endAt;
-  const ready = running && N.checked && dndOn();
+  const needApp = !!m.appOnly && IS_ANDROID && !APP;   // 안드로이드는 앱으로만 응시
+  const ready = running && N.checked && dndOn() && !needApp;
   const nt = m.notice || {};
+  const dndBox = !APP ? `<div class="box info">전화와 알림이 시험을 방해하지 않게 <b>방해 금지 모드</b>를 켜 주세요.${/iPhone|iPad/i.test(navigator.userAgent) ? '\n아이폰은 <b>사용법 유도</b>(설정 → 손쉬운 사용)를 켜고 옆 버튼을 세 번 누르면 시험 화면이 고정됩니다.' : ''}</div><button class="btn gh" style="flex:none" data-a="dnd">방해 금지 모드 켜는 방법</button>`
+    : appCall('canAutoDnd', false) ? '<div class="box ok">시험을 시작하면 <b>방해 금지 모드가 자동으로 켜지고</b>, 끝나면 원래대로 돌아갑니다.</div>'
+    : appCall('isDndOn', false) ? '<div class="box ok">방해 금지 모드가 켜져 있습니다.</div>'
+    : '<div class="box warn"><b>방해 금지 모드가 꺼져 있습니다.</b> 아래 버튼을 눌러 "푸른시험"을 허용하면 시험 때 자동으로 켜고 끕니다. 한 번만 하면 됩니다.</div><button class="btn am" style="flex:none" data-a="dnd">방해 금지 자동 켜기 허용</button>';
   app.innerHTML = `<div class="phone"><div class="bar"><span>시험 안내</span><span class="who">${esc(who())}</span></div>
     <div class="body">
       <div class="h1">${esc(nt.title || m.title || '시험')}</div>
@@ -149,19 +158,19 @@ function viewNotice() {
         <li>시험 화면을 벗어나면 <b>횟수와 시각이 기록</b>됩니다.</li>
         <li>화면 캡처·녹화·복사는 금지입니다.</li>
         <li>답은 고르는 즉시 저장됩니다. 앱이 꺼져도 이어서 풀 수 있습니다.</li>
+        ${APP ? '<li>시작하면 <b>화면 고정</b>을 묻는 창이 뜹니다. <b>확인</b>을 눌러 주세요. 고정이 풀리면 기록되고 문제가 가려집니다.</li>' : ''}
       </ul>
-      ${APP ? `<div class="box ${dndOn() ? 'ok' : 'warn'}">${dndOn() ? '방해 금지 모드가 켜져 있습니다.' : '<b>방해 금지 모드가 꺼져 있습니다.</b> 켜야 시작할 수 있어요.'}</div>` : '<div class="box info">전화와 알림이 시험을 방해하지 않게 <b>방해 금지 모드</b>를 켜 주세요.</div>'}
-      <button class="btn gh" style="flex:none" data-a="dnd">방해 금지 모드 켜기</button>
+      ${needApp ? `<div class="box no"><b>이 시험은 안드로이드 앱으로만 볼 수 있습니다.</b>\n아래에서 앱을 내려받아 설치한 뒤, 앱에서 다시 입장해 주세요.</div><a class="btn am" style="flex:none;text-decoration:none" href="${APK_URL}">안드로이드 앱 내려받기</a>` : dndBox}
       <button class="check ${N.checked ? 'on' : ''}" data-a="agree" aria-pressed="${N.checked}"><i>✓</i>확인했습니다</button>
       <div class="sm">${running ? '' : '교수님이 시험을 시작하면 아래 버튼이 켜집니다. 이 화면에서 기다려 주세요.'}</div>
     </div>
     <div class="foot"><button class="btn gh" style="flex:0 0 30%" data-a="home">나가기</button><button class="btn am" data-a="start" ${ready ? '' : 'disabled'}>시험 시작</button></div></div>`;
   clearInterval(noticeT);
-  if (APP) noticeT = setInterval(() => { if (view !== 'notice') return clearInterval(noticeT); const b = document.querySelector('[data-a=start]'); if (b && b.disabled === (running && N.checked && dndOn())) viewNotice(); }, 1000);
+  if (APP) noticeT = setInterval(() => { if (view !== 'notice') return clearInterval(noticeT); const b = document.querySelector('[data-a=start]'); if (b && b.disabled === (running && N.checked && dndOn() && !needApp)) viewNotice(); }, 1000);
 }
 on('agree', () => { N.checked = !N.checked; const y = document.querySelector('.body').scrollTop; viewNotice(); document.querySelector('.body').scrollTop = y; });
 on('dnd', () => {
-  if (APP && APP.openDndSettings) { try { APP.openDndSettings(); return; } catch (e) {} }
+  if (APP) { if (appCall('canAutoDnd', false)) return toast('시험을 시작하면 자동으로 켜집니다.'); try { APP.requestDndAccess(); } catch (e) {} return; }
   modal(`<h2>방해 금지 모드 켜는 방법</h2>
     <div class="txt"><b>아이폰</b>\n화면 오른쪽 위에서 아래로 쓸어내려 제어 센터를 열고 → 집중 모드 → 방해금지 모드를 누릅니다.\n\n<b>안드로이드</b>\n화면 위에서 아래로 두 번 쓸어내리고 → 방해 금지를 누릅니다.</div>
     <button class="btn" data-a="modal-close">알겠습니다</button>`);
@@ -318,7 +327,7 @@ async function finish(auto) {
 function logEv(t) { if (X) be.push(ansPath() + '/ev', { t, at: be.now() }).catch(() => {}); }
 function wentAway(t) { if (!X || X.done || X.away) return; X.away = true; X.leaves++; logEv(t); }
 function cameBack() {
-  if (!X || X.done || !X.away) return;
+  if (!X || X.done || !X.away || X.unpinned) return;
   X.away = false; logEv('back');
   showGuard(`<div class="h1">시험 화면을 벗어났습니다</div><div class="txt">벗어난 횟수와 시각이 기록되었습니다.\n지금까지 <b>${X.leaves}회</b></div><button class="btn am" style="flex:none" data-a="guard-ok">시험으로 돌아가기</button>`);
 }
@@ -330,10 +339,25 @@ function otherWindow() {
 }
 document.addEventListener('visibilitychange', () => (document.hidden ? wentAway('leave') : cameBack()));
 window.addEventListener('pagehide', () => wentAway('leave'));
-window.addEventListener('blur', () => setTimeout(() => { const el = document.activeElement; if (el && el.tagName === 'IFRAME') return; wentAway('leave'); }, 0));
-window.addEventListener('focus', cameBack);
-// 안드로이드 앱이 알려 주는 일 (화면 고정이 풀림 등)
-window.onPureunEvent = t => { if (t === 'back') cameBack(); else wentAway(t === 'unpin' ? 'unpin' : 'leave'); };
+// 창이 포커스를 잃음 = 다른 창으로 감. 영상(IFRAME)이나 드롭다운(SELECT)을 누른 것은 이탈이 아닙니다.
+// 앱 안에서는 앱이 직접 알려 주므로 쓰지 않습니다(드롭다운 창이 뜰 때 잘못 기록되는 것을 막음).
+if (!APP) {
+  window.addEventListener('blur', () => setTimeout(() => { const el = document.activeElement; if (el && (el.tagName === 'IFRAME' || el.tagName === 'SELECT')) return; wentAway('leave'); }, 0));
+  window.addEventListener('focus', cameBack);
+}
+// 안드로이드 앱이 알려 주는 일
+window.onPureunEvent = t => {
+  if (t === 'back') return cameBack();
+  if (t === 'pinned') { if (X && !X.done && X.unpinned) { X.unpinned = false; X.away = true; cameBack(); } return; }
+  if (t === 'unpin') {
+    if (!X || X.done) return;
+    if (!X.unpinned) { X.unpinned = true; X.away = false; wentAway('unpin'); }
+    // 다시 고정할 때까지 문제를 가립니다
+    return showGuard(`<div class="h1">화면 고정이 풀렸습니다</div><div class="txt">풀린 시각이 기록되었습니다.\n아래 버튼을 누르고 <b>확인</b>을 눌러 화면을 다시 고정해야 시험을 계속할 수 있습니다.</div><button class="btn am" style="flex:none" data-a="repin">화면 고정 다시 켜기</button>`);
+  }
+  wentAway('leave');
+};
+on('repin', () => { try { APP.startLock(); } catch (e) {} });
 for (const ev of ['copy', 'cut', 'paste', 'contextmenu', 'dragstart', 'drop'])
   document.addEventListener(ev, e => { if (X) e.preventDefault(); });
 document.addEventListener('selectstart', e => { if (X && !e.target.closest?.('textarea,input')) e.preventDefault(); });

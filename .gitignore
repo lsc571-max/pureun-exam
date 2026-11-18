@@ -1,3 +1,9 @@
 node_modules/
 *.log
 .firebase/
+# 앱 서명 열쇠는 저장소에 올리지 않습니다 (GitHub 비밀값으로 넣음)
+android/*.p12
+android/*.jks
+android/.gradle/
+android/build/
+android/app/build/

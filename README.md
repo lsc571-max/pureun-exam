@@ -32,3 +32,11 @@ npm test            # 채점 · 랜덤 · 저장
 npm run test:rules  # 보안 규칙 (자바 필요)
 npm run test:e2e    # 브라우저에서 교수·학생 흐름 전체
 ```
+
+## 안드로이드 앱
+
+`android/` 는 시험 웹을 감싼 앱입니다. 웹이 할 수 없는 일(화면 고정, 캡처·녹화 차단, 방해 금지 자동 켜기/되돌리기, 이탈 알림)만 맡고, 화면과 기능은 웹을 그대로 씁니다. 그래서 웹을 고치면 앱을 다시 설치하지 않아도 반영됩니다.
+
+- `android/` 가 바뀌면 GitHub Actions(`안드로이드 앱 만들기`)가 APK를 만들어 Releases 에 올립니다.
+- 내려받기: https://github.com/lsc571-max/pureun-exam/releases/latest/download/pureun-exam.apk
+- 서명 열쇠는 저장소에 없습니다. GitHub 비밀값 `ANDROID_KEYSTORE_BASE64` 에 넣어 두면 빌드마다 같은 열쇠로 서명해서 업데이트를 덮어 설치할 수 있습니다. 비밀값이 없으면 빌드마다 임시 열쇠를 쓰므로, 새 APK를 설치할 때 기존 앱을 지워야 합니다.
