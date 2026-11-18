@@ -599,7 +599,11 @@ try {
   await late.waitForFunction(() => { const g = document.getElementById('guard'); return !g.hidden && g.classList.contains('black') && /얼굴이 보이지 않습니다.*경고 1회/s.test(g.textContent); }, null, { timeout: 8000 });
   await late.evaluate(() => { window.__app.face = { face: true, yaw: 10 }; });
   await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 4000 });
-  say('카메라: 고개를 30도 넘게 돌려 경고 2회가 되면 잠기고, 교수가 풀어 준다');
+  say('카메라: 고개를 30도 넘게 돌려 경고 3회가 되면 잠기고, 교수가 풀어 준다');
+  await late.evaluate(() => { window.__app.face = { face: true, yaw: 45 }; });
+  await late.waitForFunction(() => { const g = document.getElementById('guard'); return !g.hidden && /고개가 돌아가 있습니다.*경고 2회.*한 번 더/s.test(g.textContent); }, null, { timeout: 8000 });   // 2회는 경고만
+  await late.evaluate(() => { window.__app.face = { face: true, yaw: 0 }; });
+  await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 4000 });
   await late.evaluate(() => { window.__app.face = { face: true, yaw: 45 }; });
   await late.waitForFunction(() => /화면이 잠겼습니다.*교수님께 확인받으세요/s.test(document.getElementById('guard').textContent) && !document.getElementById('guard').hidden, null, { timeout: 8000 });
   await late.evaluate(() => { window.__app.face = { face: true, yaw: 0 }; window.onPureunEvent('leave'); window.onPureunEvent('back'); });
@@ -614,9 +618,9 @@ try {
   await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 5000 });
   d = await db(prof);
   const lateEv = Object.values(d.answers[exId]['20261302'].ev).map(e => e.t);
-  assert.equal(lateEv.filter(t => t === 'face').length, 2); assert.equal(lateEv.filter(t => t === 'lock').length, 1); assert.ok(lateEv.includes('faceok'));
+  assert.equal(lateEv.filter(t => t === 'face').length, 3); assert.equal(lateEv.filter(t => t === 'lock').length, 1); assert.ok(lateEv.includes('faceok'));
   assert.equal(d.answers[exId]['20261302'].unlock, 1);
-  assert.match(await prof.locator('#pmain tr', { hasText: '이영희' }).textContent(), /2회.*1회/s);   // 카메라 경고 2회 · 잠금 1회
+  assert.match(await prof.locator('#pmain tr', { hasText: '이영희' }).textContent(), /3회.*1회/s);   // 카메라 경고 3회 · 잠금 1회
   say('카메라: 기기가 뜨거워지면 저절로 꺼지고, "감시 중" 표시는 남는다');
   await late.evaluate(() => { window.__app.hot = 3; });
   await late.waitForFunction(id => Object.values(JSON.parse(localStorage.getItem('mockdb')).answers[id]['20261302'].ev).some(x => x.t === 'camoff'), exId, { timeout: 30000 });   // 발열 확인은 20초마다

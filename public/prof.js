@@ -368,7 +368,7 @@ on('ex-release', async () => {
   await setMeta({ released: !m.released });
 });
 on('unsubmit', async el => { if (await confirmBox('제출을 취소할까요?', '학생이 남은 시간 동안 다시 풀 수 있게 됩니다.', '취소하기')) await be.remove(`answers/${P.id}/${el.dataset.sid}/submittedAt`); });
-// 카메라 경고 2회로 잠긴 학생의 화면을 풀어 줍니다 (교실에서 확인한 뒤 누르세요)
+// 카메라 경고 3회로 잠긴 학생의 화면을 풀어 줍니다 (교실에서 확인한 뒤 누르세요)
 on('unlock', async el => {
   const sid = el.dataset.sid, a = P.answers[sid]; if (!a) return;
   await be.set(`answers/${P.id}/${sid}/unlock`, C.leaveSummary(a.ev).locks);
@@ -392,7 +392,7 @@ on('ex-settings', () => {
     <button class="check ${m.practice ? 'on' : ''}" data-a="s-practice" id="s-prac"><i>✓</i>문제풀이(학습) 모드로 공개</button>
     <div class="sm">켜면 입장한 학생이 이 문항을 순서대로 풀며 정답과 해설을 바로 봅니다. 실제 시험 문항에는 켜지 마세요.</div>
     <button class="check ${m.cam ? 'on' : ''}" data-a="s-practice" id="s-cam"><i>✓</i>전면 카메라로 얼굴 확인</button>
-    <div class="sm">켜면 시험 중 얼굴이 화면에서 3초 넘게 사라지거나 고개가 30도 넘게 돌아가면 화면을 가리고 경고를 기록합니다. 경고 2회면 화면이 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 영상은 저장하지 않습니다. 기기가 뜨거워지거나 배터리가 아래 값보다 적으면 카메라를 저절로 끕니다.</div>
+    <div class="sm">켜면 시험 중 얼굴이 화면에서 3초 넘게 사라지거나 고개가 30도 넘게 돌아가면 화면을 가리고 경고를 기록합니다. 경고 3회면 화면이 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 영상은 저장하지 않습니다. 기기가 뜨거워지거나 배터리가 아래 값보다 적으면 카메라를 저절로 끕니다.</div>
     <label class="f">카메라를 끄는 배터리 잔량(%)<input class="in" id="s-batt" type="number" min="0" max="100" value="${m.camBatt >= 0 ? m.camBatt : 20}"></label>
     <button class="check ${m.appOnly ? 'on' : ''}" data-a="s-practice" id="s-app"><i>✓</i>안드로이드는 앱으로만 응시</button>
     <div class="sm">켜면 안드로이드 휴대폰의 인터넷 창(크롬 등)으로는 시작할 수 없고, 앱 내려받기 안내가 나옵니다. 아이폰은 그대로 웹으로 봅니다.</div>

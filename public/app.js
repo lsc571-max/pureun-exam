@@ -76,7 +76,6 @@ function entryCancelled() {
   viewEntry(`입장이 취소되었습니다. 입장을 다시 누르면 들어갈 수 있습니다.${inExam ? ' 풀던 답은 이 기기에 남아 있어, 같은 학번으로 다시 들어가면 이어서 보냅니다. 시험 시간은 그동안에도 흐릅니다.' : ''}`);
   if (me && $('e-sid')) { $('e-sid').value = me.sid; $('e-name').value = me.name; }   // 다시 입력하지 않아도 되게
 }
-on('to-prof', () => { if (X) { flushTyping(); try { saveTime(); } catch (e) {} } location.href = urlFor('prof=1'); });
 // 테스트 학생 화면 맨 위 띠
 const testRibbon = () => (TEST ? `<div class="testband">테스트 학생 ${TEST} · 실제 학생처럼 기록됩니다 · '푸른시험'을 5번 누르면 교수 화면</div>` : '');
 // '푸른시험' 글자를 5번 빠르게 누르면 교수 화면 ↔ 테스트 학생 화면 (교수님이 로그인한 적 있는 기기에서만)
@@ -356,7 +355,7 @@ function renderExam() {
   if (X.curQ !== q.id) { saveTime(); X.curQ = q.id; X.qStart = paused() ? 0 : Date.now(); }
   sessionStorage.setItem('idx:' + X.id, X.idx);
   const body = answerHtml(q, o, a);
-  app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span>${TEST ? '<button data-a="to-prof">교수 화면</button>' : ''}${S.exams[X.id] && S.exams[X.id].cam ? '<span class="watch"><i></i>부정행위 감시 중</span>' : ''}<span class="clock" id="clock">--:--</span></div>
+  app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span>${S.exams[X.id] && S.exams[X.id].cam ? '<span class="watch"><i></i>부정행위 감시 중</span>' : ''}<span class="clock" id="clock">--:--</span></div>
     <div class="prog"><i style="width:${(X.idx + 1) / n * 100}%"></i></div>
     <div class="body split"><div class="qa"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, X.imgs)}</div><div class="qb">${body}<div class="save" id="save" style="margin-top:auto"></div></div></div>
     <div class="foot"><button class="btn gh" data-a="prev" ${X.idx ? '' : 'disabled'}>이전</button><button class="btn gh" data-a="qlist">문항 목록</button>${X.idx < n - 1 ? '<button class="btn" data-a="next">다음</button>' : '<button class="btn am" data-a="qlist">제출</button>'}</div></div>`;
@@ -489,15 +488,16 @@ async function camStart() {
 }
 function camStop() { if (X && X.watch) { X.watch.stop(); X.watch = null; } }
 // 얼굴이 몇 초 넘게 안 보임(또는 고개가 돌아감): 화면을 검게 가리고 경고. 경고가 2회 쌓이면 잠급니다.
+const LOCK_AT = 3;   // 카메라 경고가 이만큼 쌓이면 화면을 잠급니다
 function faceAway(why) {
   if (!X || X.done || locked()) return;
   X.camWarn++; logEv('face');
-  if (X.camWarn >= 2) { X.camWarn = 0; X.locks++; logEv('lock'); return showLock(); }
-  showGuard(`<div class="h1">${why === 'turn' ? '고개가 돌아가 있습니다' : '얼굴이 보이지 않습니다'}</div><div class="txt">화면을 정면으로 봐 주세요. 얼굴이 다시 보이면 시험 화면이 돌아옵니다.\n<b>경고 ${X.camWarn}회</b> — 한 번 더 받으면 화면이 잠깁니다.</div>`, 'face');
+  if (X.camWarn >= LOCK_AT) { X.camWarn = 0; X.locks++; logEv('lock'); return showLock(); }
+  showGuard(`<div class="h1">${why === 'turn' ? '고개가 돌아가 있습니다' : '얼굴이 보이지 않습니다'}</div><div class="txt">화면을 정면으로 봐 주세요. 얼굴이 다시 보이면 시험 화면이 돌아옵니다.\n<b>경고 ${X.camWarn}회</b> — ${LOCK_AT - X.camWarn === 1 ? '한 번 더' : `${LOCK_AT - X.camWarn}번 더`} 받으면 화면이 잠깁니다.</div>`, 'face');
 }
 function faceBack() { if (X && !X.done && X.guardKind === 'face') { hideGuard(); logEv('faceok'); resumeTime(); } }
 function showLock() {
-  showGuard(`<div class="h1">화면이 잠겼습니다</div><div class="txt">카메라 경고가 2회 쌓였습니다.\n<b>손을 들고 교수님께 확인받으세요.</b>\n교수님이 풀어 주면 이어서 풀 수 있습니다. 시험 시간은 계속 흐릅니다.</div><div class="sm" style="color:#c9d6cf">잠금 ${X.locks}회</div>`, 'lock');
+  showGuard(`<div class="h1">화면이 잠겼습니다</div><div class="txt">카메라 경고가 ${LOCK_AT}회 쌓였습니다.\n<b>손을 들고 교수님께 확인받으세요.</b>\n교수님이 풀어 주면 이어서 풀 수 있습니다. 시험 시간은 계속 흐릅니다.</div><div class="sm" style="color:#c9d6cf">잠금 ${X.locks}회</div>`, 'lock');
 }
 // 기기가 뜨겁거나(앱) 배터리가 모자라면(웹) 카메라를 저절로 끄고, 괜찮아지면 다시 켭니다. "감시 중" 표시는 그대로 둡니다.
 async function camPolicy() {

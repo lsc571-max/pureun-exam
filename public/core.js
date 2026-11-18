@@ -300,7 +300,7 @@ export function leaveSummary(ev) {
     warn, camOff: !!cam && cam.t !== 'camon',          // 지금 카메라가 꺼져 있는지
   };
 }
-export const EV_NAME = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함', face: '카메라 경고 (얼굴이 벗어남)', faceok: '얼굴이 다시 보임', lock: '화면 잠김 (경고 2회)',
+export const EV_NAME = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함', face: '카메라 경고 (얼굴이 벗어남)', faceok: '얼굴이 다시 보임', lock: '화면 잠김 (경고 3회)',
   camoff: '카메라 자동 꺼짐 (발열·배터리)', camon: '카메라 다시 켜짐', camfail: '카메라를 켜지 못함', nocam: '카메라 없이 시작' };
 // 얼굴 감지기가 주는 점(오른쪽 눈, 왼쪽 눈, 코끝, 입, 오른쪽 귀, 왼쪽 귀; x는 0~1)으로 고개가 좌우로 돌아간 각도를 어림합니다.
 // 정면이면 코가 두 귀의 한가운데에 있고, 고개를 돌릴수록 한쪽 귀에 가까워집니다.
