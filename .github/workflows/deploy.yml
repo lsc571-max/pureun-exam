@@ -28,10 +28,12 @@ jobs:
         run: npm test
       - name: 보안 규칙 테스트 (Firebase 에뮬레이터)
         run: npm run test:rules
+      - name: 화면 테스트용 브라우저 설치
+        timeout-minutes: 5
+        run: npx playwright install --with-deps chromium
       - name: 화면 테스트 (브라우저)
-        run: |
-          npx playwright install --with-deps chromium
-          npm run test:e2e
+        timeout-minutes: 4
+        run: npm run test:e2e
 
   deploy:
     name: Firebase 배포 (화면 + 보안 규칙)

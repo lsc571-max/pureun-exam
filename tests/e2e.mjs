@@ -32,6 +32,9 @@ const BUNDLE = [
 ];
 const RIGHT = { '첫째 문제': '다1', '둘째 문제': '가2', '셋째 문제': '라3' };
 
+let step = '';
+// 어디선가 멈추면 끝없이 기다리지 않고 실패로 끝냅니다
+const watchdog = setTimeout(() => { console.error(`\n시간 초과 — 멈춘 단계: ${step}`); process.exit(1); }, 150000);
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 412, height: 860 } });
 const errors = [];
@@ -39,7 +42,6 @@ const watch = (pg, name) => { pg.on('pageerror', e => errors.push(`${name}: ${e.
 const shot = async (pg, name) => { if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, name + '.png') }); };
 const db = pg => pg.evaluate(() => JSON.parse(localStorage.getItem('mockdb') || '{}'));
 const act = (pg, a, extra = '') => pg.click(`[data-a="${a}"]${extra}`);
-let step = '';
 const say = s => { step = s; console.log('· ' + s); };
 
 try {
@@ -331,5 +333,6 @@ try {
   if (errors.length) console.error('브라우저 오류:', errors);
   process.exitCode = 1;
 } finally {
-  await browser.close(); server.close();
+  clearTimeout(watchdog);
+  await browser.close(); server.close(); server.closeAllConnections?.();
 }
