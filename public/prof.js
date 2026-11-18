@@ -345,14 +345,13 @@ let E = null;
 function editPage(i) {
   const p = P.pages[i]; E = { i, img: p.img || '' };
   if (!C.isQuestion(p)) {
-    modal(`<h2>${C.TYPE_NAME[p.t] || ''} 쪽</h2>
+    modal(`<div class="edbar"><h2>${C.TYPE_NAME[p.t] || ''} 쪽</h2><button class="btn s gh" data-a="modal-close">취소</button><button class="btn s" data-a="f-save">저장</button></div>
       <label class="f">제목<input class="in" id="f-title" value="${esc(p.title)}" maxlength="80"></label>
-      <label class="f">내용<textarea class="in" id="f-body" rows="5" maxlength="1000">${esc(p.body)}</textarea></label>
-      <div class="row"><button class="btn gh" data-a="modal-close">취소</button><button class="btn" data-a="f-save">저장</button></div>`);
+      <label class="f">내용<textarea class="in" id="f-body" rows="5" maxlength="1000">${esc(p.body)}</textarea></label>`);
     return;
   }
   const opts = p.opts || [];
-  modal(`<h2>문항 고치기</h2>
+  modal(`<div class="edbar"><h2>문항 고치기</h2><button class="btn s gh" data-a="modal-close">취소</button><button class="btn s" data-a="f-save">저장</button></div>
     <div class="row"><label class="f" style="flex:1">유형<select class="in" id="f-t">${C.QTYPES.map(t => `<option value="${t}" ${p.t === t ? 'selected' : ''}>${C.TYPE_NAME[t]}</option>`).join('')}</select></label>
       <label class="f" style="width:90px">난이도<select class="in" id="f-level">${C.LEVELS.map(l => `<option ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="f" style="width:90px">배점<input class="in" id="f-pts" type="number" min="0" step="0.5" value="${p.pts || ''}"></label></div>
@@ -363,8 +362,7 @@ function editPage(i) {
     <label class="f" id="f-modelw" ${C.isChoice(p) ? 'hidden' : ''}>모범 답안<textarea class="in" id="f-model" rows="3" maxlength="3000">${esc(p.model || '')}</textarea></label>
     <label class="f">해설 (왜 정답인지) / 서술형은 채점 기준<textarea class="in" id="f-why" rows="3" maxlength="3000">${esc(p.why)}</textarea></label>
     <div class="f">사진<div class="row"><input type="file" id="f-file" accept="image/*" style="max-width:100%"><button class="mini red" data-a="f-noimg">사진 빼기</button></div><div id="f-prev"></div></div>
-    <label class="f">영상 주소 (유튜브 공유 링크)<input class="in" id="f-video" value="${esc(p.video || '')}" placeholder="https://youtu.be/…" maxlength="300"></label>
-    <div class="row"><button class="btn gh" data-a="modal-close">취소</button><button class="btn" data-a="f-save">저장</button></div>`, { wide: true, sticky: true });
+    <label class="f">영상 주소 (유튜브 공유 링크)<input class="in" id="f-video" value="${esc(p.video || '')}" placeholder="https://youtu.be/…" maxlength="300"></label>`, { wide: true, sticky: true });
   $('f-kind').addEventListener('change', e => { const c = e.target.value === 'c'; $('f-choice').hidden = !c; $('f-modelw').hidden = c; });
   $('f-file').addEventListener('change', async e => {
     const f = e.target.files[0]; if (!f) return;
