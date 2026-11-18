@@ -34,17 +34,24 @@ const within = (p, ms = 8000) => Promise.race([p, new Promise((_, rej) => setTim
 let unsubExams = null, unsubCls = null, unsubNeed = null, unsubMe = null, profMod = null;
 async function boot() {
   if (TEST) document.title = `[테스트 학생 ${TEST}] 푸른시험`;
-  try { setBackend(await (MOCK ? import('./mock.js') : import('./fb.js')).then(m => m.createBackend(CONFIG, TEST ? { name: 'test' + TEST, session: true } : {}))); }
+  try { setBackend(await (MOCK ? import('./mock.js') : import('./fb.js')).then(m => m.createBackend(CONFIG, TEST ? { name: 'test' + TEST, session: true } : WANT_PROF ? { name: 'prof' } : {}))); }
   catch (e) { app.innerHTML = shell('<div class="h1">연결하지 못했어요</div><div class="txt">인터넷 연결을 확인한 뒤 다시 시도해 주세요.</div><button class="btn am" style="flex:none" data-a="reload">다시 시도</button>', true); return; }
   be.onAuth(async u => {
     stopExam(); if (unsubExams) { unsubExams(); unsubExams = null; } if (unsubCls) { unsubCls(); unsubCls = null; } if (unsubNeed) { unsubNeed(); unsubNeed = null; } if (unsubMe) { unsubMe(); unsubMe = null; }
     S.user = u; S.role = ''; S.me = null;
     try {
-      if (!u) { if (WANT_PROF) return viewProfLogin(); await be.signInAnon(); return; }
+      // 교수용 주소와 학생용 주소는 로그인 자리가 따로입니다(교수: 'prof', 학생: 기본).
+      // 그래서 같은 기기에서도 교수 로그인과 학생 입장이 서로 덮이지 않습니다.
+      if (WANT_PROF) {
+        if (!u) return viewProfLogin();
+        if (u.anon) { await be.signOut(); return; }   // 교수 자리에 학생 로그인이 있으면 내보냄
+      } else {
+        if (!u) { await be.signInAnon(); return; }
+        if (!u.anon) { await be.signOut(); return; }  // 예전에 학생 자리에 남아 있던 교수 로그인은 내보내고 학생으로 시작
+      }
       unsubCls = be.on('classes', v => { S.classes = C.classList(v); if ($('e-sid')) keepEntry(); if (profMod && S.role === 'prof') profMod.onClasses(); });
       unsubNeed = be.on('entry/need', v => { S.needCode = !!v; if ($('e-sid')) keepEntry(); });
       if (u.anon) {
-        if (WANT_PROF) return viewProfLogin();
         S.role = 'student';
         S.me = await be.get('users/' + u.uid);
         // 교수님이 '입장 취소'를 누르면 이 기록이 지워집니다. 껐다 켜지 않아도 바로 입장 화면으로 돌아갑니다.

@@ -753,6 +753,13 @@ try {
   await key(prof, 'Control+y');
   await prof.waitForFunction(() => !Object.values(JSON.parse(localStorage.getItem('mockdb')).users || {}).some(u => /^TEST/.test(u.sid)));
 
+  say('교수용과 학생용은 로그인이 따로: 같은 탭에서 학생 주소를 열면 학생 화면, 교수 주소로 돌아오면 교수 로그인 그대로');
+  await prof.goto(BASE + '/?mock=1');
+  await prof.waitForSelector('#e-sid');                                  // 교수 화면이 아니라 학생 입장 화면
+  assert.equal(await prof.locator('[data-a="new-exam"]').count(), 0);
+  await prof.goto(BASE + '/?prof=1&mock=1');
+  await prof.waitForSelector('[data-a="new-exam"]');                     // 교수 로그인은 그대로
+
   assert.deepEqual(errors, [], '브라우저 오류');
   console.log('\n화면 테스트 통과');
 } catch (e) {
