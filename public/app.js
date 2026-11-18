@@ -225,7 +225,7 @@ function viewNotice() {
       <ul class="rules">
         <li><b>시험 시작</b>을 누른 때부터 <b>${m.minutes}분</b>이 흐르고, 끝나면 자동으로 제출됩니다.</li>${running ? `<li>늦게 시작해도 전체 마감 시각 <b>${hhmmss(m.endAt).slice(0, 5)}</b>에는 모두 끝납니다.</li>` : ''}
         <li>문제 순서와 보기 순서는 학생마다 다릅니다.</li>
-        <li>시험 화면을 벗어나면 <b>횟수와 시각이 기록</b>됩니다.</li>
+        <li>시험 화면을 벗어나면 <b>횟수와 시각이 기록</b>됩니다.${m.leaveLock === 0 ? '' : ` <b>${Number.isFinite(m.leaveLock) && m.leaveLock > 0 ? m.leaveLock : 2}번</b> 벗어나면 화면이 잠기고, 교수님이 풀어 주셔야 합니다.`}</li>
         <li>화면 캡처·녹화·복사는 금지입니다.</li>
         <li>답은 고르는 즉시 저장됩니다. 앱이 꺼져도 이어서 풀 수 있습니다.</li>
         ${APP ? '<li>시작하면 <b>화면 고정</b>을 묻는 창이 뜹니다. <b>확인</b>을 눌러 주세요. 고정이 풀리면 기록되고 문제가 가려집니다.</li>' : ''}
@@ -286,7 +286,7 @@ async function startExam() {
       order: C.examOrder(sheet, id, S.me.sid), idx: Math.max(0, +(sessionStorage.getItem('idx:' + id) || 0)),
       sess, leaves: C.leaveSummary(mine.ev).count, away: false, unsubs: [], done: false, typing: 0,
       tm: { ...(mine.tm || {}) }, tmDirty: {}, curQ: '', qStart: 0, ticks: 0,                                   // 문항별 풀이 시간(초)
-      camWarn: C.leaveSummary(mine.ev).warn, locks: C.leaveSummary(mine.ev).locks, unlockN: mine.unlock || 0,   // 카메라 경고 · 잠금
+      camWarn: C.leaveSummary(mine.ev).warn, leaveWarn: C.leaveSummary(mine.ev).lwarn, locks: C.leaveSummary(mine.ev).locks, unlockN: mine.unlock || 0,   // 카메라 경고 · 잠금
       watch: null, camDown: false, guardKind: '',
     };
     X.idx = Math.min(X.idx, X.order.length - 1);
@@ -299,7 +299,7 @@ async function startExam() {
     X.unsubs.push(be.on(path + '/sess', v => { if (X && !X.done && v && v !== X.sess) otherWindow(); }));
     X.unsubs.push(be.on(path + '/unlock', v => {   // 교수가 잠긴 화면을 풀어 줌
       if (!X) return; X.unlockN = v || 0;
-      if (!locked() && X.guardKind === 'lock') { hideGuard(); if (X.watch) X.watch.reset(); resumeTime(); toast('교수님이 잠금을 풀었습니다. 계속 푸세요.', 4000); }
+      if (!locked() && X.guardKind === 'lock') { logEv('unlocked'); X.camWarn = 0; X.leaveWarn = 0; hideGuard(); if (X.watch) X.watch.reset(); resumeTime(); toast('교수님이 잠금을 풀었습니다. 계속 푸세요.', 4000); }
     }));
     X.unsubs.push(be.on(path + '/until', v => { if (X) { X.until = v || 0; tick(); } }));   // 교수가 이 학생의 시간을 따로 준 경우
     X.unsubs.push(be.on(path + '/submittedAt', v => { if (X && !X.done && v) finish(true); }));
@@ -457,17 +457,20 @@ function saveTime() {
   const patch = Object.fromEntries(ids.map(id => ['tm/' + id, Math.min(100000, X.tm[id])])); X.tmDirty = {};
   return be.update(X.path, patch).catch(() => {});
 }
-function wentAway(t) { if (!X || X.done || X.away) return; pauseTime(); X.away = true; X.leaves++; logEv(t); }
+function wentAway(t) { if (!X || X.done || X.away) return; pauseTime(); X.away = true; X.leaves++; if (!locked()) X.leaveWarn++; logEv(t); }
 function cameBack() {
   if (!X || X.done || !X.away || X.unpinned) return;
   X.away = false; logEv('back');
-  showGuard(`<div class="h1">시험 화면을 벗어났습니다</div><div class="txt">벗어난 횟수와 시각이 기록되었습니다.\n지금까지 <b>${X.leaves}회</b></div><button class="btn am" style="flex:none" data-a="guard-ok">시험으로 돌아가기</button>`);
+  if (locked()) return;   // 잠긴 동안에는 잠금 화면 그대로
+  const L = rule('leaveLock', 2, 0, 20);
+  if (L && X.leaveWarn >= L) { X.leaveWarn = 0; X.locks++; logEv('lockout'); return showLock('leave'); }
+  showGuard(`<div class="h1">시험 화면을 벗어났습니다</div><div class="txt">벗어난 횟수와 시각이 기록되었습니다.\n지금까지 <b>${X.leaves}회</b>${L ? `\n${L - X.leaveWarn === 1 ? '한 번 더' : `${L - X.leaveWarn}번 더`} 벗어나면 화면이 잠깁니다.` : ''}</div><button class="btn am" style="flex:none" data-a="guard-ok">시험으로 돌아가기</button>`, 'leave');
 }
 // kind: 'face'(얼굴이 돌아오면 저절로 걷힘) · 'lock'(교수가 풀어야 함) · ''(그 밖). 잠긴 동안에는 다른 안내로 덮지 않습니다.
 function showGuard(html, kind = '') {
   if (X && locked() && kind !== 'lock') return;
   const g = $('guard'); g.innerHTML = `<div style="max-width:420px;display:flex;flex-direction:column;gap:16px;text-align:center">${html}</div>`;
-  g.classList.toggle('black', kind === 'face' || kind === 'lock'); g.hidden = false;
+  g.classList.toggle('black', kind === 'face' || kind === 'lock' || kind === 'leave'); g.hidden = false;
   if (X) { X.guardKind = kind; pauseTime(); }
 }
 function hideGuard() { $('guard').hidden = true; if (X) X.guardKind = ''; }
@@ -478,7 +481,7 @@ async function camStart() {
   if (!X || X.watch || X.done || X.camStarting) return;
   X.camStarting = true; const mine = X;
   try {
-    const w = await startWatch({ onAway: faceAway, onBack: faceBack });
+    const w = await startWatch({ onAway: faceAway, onBack: faceBack, yawLimit: rule('camYaw', 30, 5, 90), awayMs: rule('camSec', 3, 1, 60) * 1000 });
     if (X !== mine || mine.done) return w.stop();
     X.watch = w;
     if (X.camDown) { X.camDown = false; logEv('camon'); }
@@ -489,7 +492,9 @@ async function camStart() {
 function camStop() { if (X && X.watch) { X.watch.stop(); X.watch = null; } }
 // 얼굴이 몇 초 넘게 안 보임(또는 고개가 돌아감): 화면을 검게 가리고 경고. 경고가 2회 쌓이면 잠급니다.
 // 카메라 경고가 이만큼 쌓이면 화면을 잠급니다. 교수님이 시험 설정에서 정하고(기본 3회), 0이면 잠그지 않고 경고만 합니다.
-const lockAt = () => { const v = X && (S.exams[X.id] || {}).camLock; return Number.isInteger(v) && v >= 0 ? v : 3; };
+// 교수님이 시험 설정에서 정한 기준 (정하지 않았으면 기본값)
+const rule = (k, def, min, max) => { const v = X && (S.exams[X.id] || {})[k]; return Number.isFinite(v) && v >= min && v <= max ? v : def; };
+const lockAt = () => rule('camLock', 3, 0, 20);   // 카메라 경고 몇 번에 잠글지 (0: 잠그지 않음)
 function faceAway(why) {
   if (!X || X.done || locked()) return;
   X.camWarn++; logEv('face');
@@ -498,8 +503,8 @@ function faceAway(why) {
   showGuard(`<div class="h1">${why === 'turn' ? '고개가 돌아가 있습니다' : '얼굴이 보이지 않습니다'}</div><div class="txt">화면을 정면으로 봐 주세요. 얼굴이 다시 보이면 시험 화면이 돌아옵니다.\n<b>경고 ${X.camWarn}회</b> ${LOCK_AT ? `— ${LOCK_AT - X.camWarn === 1 ? '한 번 더' : `${LOCK_AT - X.camWarn}번 더`} 받으면 화면이 잠깁니다.` : '— 경고는 교수님 화면에 기록됩니다.'}</div>`, 'face');
 }
 function faceBack() { if (X && !X.done && X.guardKind === 'face') { hideGuard(); logEv('faceok'); resumeTime(); } }
-function showLock() {
-  showGuard(`<div class="h1">화면이 잠겼습니다</div><div class="txt">카메라 경고가 ${lockAt() || X.camWarn}회 쌓였습니다.\n<b>손을 들고 교수님께 확인받으세요.</b>\n교수님이 풀어 주면 이어서 풀 수 있습니다. 시험 시간은 계속 흐릅니다.</div><div class="sm" style="color:#c9d6cf">잠금 ${X.locks}회</div>`, 'lock');
+function showLock(why = 'face') {
+  showGuard(`<div class="h1">화면이 잠겼습니다</div><div class="txt">${why === 'leave' ? `시험 화면을 ${rule('leaveLock', 2, 0, 20)}번 벗어났습니다.` : `카메라 경고가 ${lockAt() || X.camWarn}회 쌓였습니다.`}\n<b>손을 들고 교수님께 확인받으세요.</b>\n교수님이 풀어 주면 이어서 풀 수 있습니다. 시험 시간은 계속 흐릅니다.</div><div class="sm" style="color:#c9d6cf">잠금 ${X.locks}회</div>`, 'lock');
 }
 // 기기가 뜨겁거나(앱) 배터리가 모자라면(웹) 카메라를 저절로 끄고, 괜찮아지면 다시 켭니다. "감시 중" 표시는 그대로 둡니다.
 async function camPolicy() {

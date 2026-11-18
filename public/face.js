@@ -34,7 +34,7 @@ export async function testCamera() {
 
 // 감시 시작. onAway(why): 얼굴이 AWAY_MS 동안 안 보이거나('gone') 돌아가 있음('turn'). onBack(): 다시 보임.
 // 돌려주는 stop() 을 부르면 카메라가 꺼집니다.
-export async function startWatch({ onAway, onBack }) {
+export async function startWatch({ onAway, onBack, yawLimit = YAW_LIMIT, awayMs = AWAY_MS }) {
   const f = fake();
   let stream = null, video = null, det = null;
   if (!f) {
@@ -62,11 +62,11 @@ export async function startWatch({ onAway, onBack }) {
     let r;
     try { r = look(); fails = 0; } catch (e) { if (++fails > 10) { badSince = 0; } return; }
     if (!r) return;
-    const why = !r.face ? 'gone' : Math.abs(r.yaw) > YAW_LIMIT ? 'turn' : '';
+    const why = !r.face ? 'gone' : Math.abs(r.yaw) > yawLimit ? 'turn' : '';
     const now = Date.now();
     if (why) {
       if (!badSince) badSince = now;
-      if (!away && now - badSince >= AWAY_MS) { away = true; onAway(why); }
+      if (!away && now - badSince >= awayMs) { away = true; onAway(why); }
     } else {
       badSince = 0;
       if (away) { away = false; onBack(); }

@@ -272,7 +272,9 @@ try {
   const kp = await kakao.newPage(); await kp.goto(BASE + '/?mock=1');
   await kp.waitForFunction(() => /다른 창에서 열어 주세요/.test(document.body.textContent));   // 카카오톡 안의 창에서는 입장하지 않게
   await kakao.close();
-  await act(prof, 'ex-settings'); await prof.click('#s-app'); await act(prof, 's-save');   // 나머지 테스트는 웹으로 진행
+  await act(prof, 'ex-settings'); await prof.click('#s-app');   // 나머지 테스트는 웹으로 진행
+  assert.equal(await prof.inputValue('#s-leavelock'), '2', '화면 벗어남 잠금 횟수의 기본값이 2가 아님');
+  await prof.fill('#s-leavelock', '0'); await act(prof, 's-save');   // 이 학생들은 화면을 벗어나도 잠그지 않음(기록만)
   await prof.waitForFunction(() => document.getElementById('modal').hidden);
 
   say('대기실 열기');
@@ -550,9 +552,11 @@ try {
   say('끝난 시험 다시 열기: 못 본 학생만 응시한다');
   await act(prof, 'p-tab', '[data-t="run"]');
   await act(prof, 'ex-settings'); await prof.click('#s-cam');   // 다시 여는 시험은 카메라 얼굴 확인을 켬
+  await prof.fill('#s-leavelock', '2'); await prof.fill('#s-camyaw', '35'); await prof.fill('#s-camsec', '2');
   assert.equal(await prof.inputValue('#s-camlock'), '3', '잠그는 경고 횟수의 기본값이 3이 아님');
   await prof.fill('#s-camlock', '3'); await act(prof, 's-save');
   assert.equal((await db(prof)).exams[exId].camLock, 3);
+  { const ex = (await db(prof)).exams[exId]; assert.deepEqual([ex.camYaw, ex.camSec, ex.leaveLock], [35, 2, 2]); }
   await prof.waitForFunction(() => document.getElementById('modal').hidden);
   await act(prof, 'ex-resume');
   await prof.fill('#rs-min', '3'); await act(prof, 'rs-go');
@@ -591,7 +595,8 @@ try {
   assert.equal((await late.evaluate(() => window.__app.calls)).filter(c => c === 'startLock').length, 2);
   await late.evaluate(() => window.onPureunEvent('pinned'));
   await late.waitForSelector('#guard:not([hidden]) [data-a="guard-ok"]');
-  assert.match(await late.textContent('#guard'), /1회/);
+  assert.match(await late.textContent('#guard'), /1회.*한 번 더 벗어나면 화면이 잠깁니다/s);
+  assert.ok(await late.evaluate(() => document.getElementById('guard').classList.contains('black')), '돌아왔을 때 화면이 검게 가려지지 않음');
   await act(late, 'guard-ok');
   d = await db(prof);
   assert.deepEqual(Object.values(d.answers[exId]['20261302'].ev).map(e => e.t).sort(), ['back', 'unpin']);
@@ -624,6 +629,16 @@ try {
   assert.equal(lateEv.filter(t => t === 'face').length, 3); assert.equal(lateEv.filter(t => t === 'lock').length, 1); assert.ok(lateEv.includes('faceok'));
   assert.equal(d.answers[exId]['20261302'].unlock, 1);
   assert.match(await prof.locator('#pmain tr', { hasText: '이영희' }).textContent(), /3회.*1회/s);   // 카메라 경고 3회 · 잠금 1회
+  say('화면 벗어남: 1회는 경고, 2회째에 잠기고 교수가 풀어 준다 (잠금을 푼 뒤 다시 셈)');
+  await late.evaluate(() => { window.onPureunEvent('leave'); window.onPureunEvent('back'); });
+  await late.waitForFunction(() => /한 번 더 벗어나면/.test(document.getElementById('guard').textContent) && !document.getElementById('guard').hidden);
+  await act(late, 'guard-ok');
+  await late.evaluate(() => { window.onPureunEvent('leave'); window.onPureunEvent('back'); });
+  await late.waitForFunction(() => /화면이 잠겼습니다.*시험 화면을 2번 벗어났습니다/s.test(document.getElementById('guard').textContent) && !document.getElementById('guard').hidden);
+  await shot(late, 's12-lockout');
+  await prof.click('[data-a="unlock"][data-sid="20261302"]');
+  await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 5000 });
+  assert.ok(Object.values((await db(prof)).answers[exId]['20261302'].ev).some(e => e.t === 'lockout'));
   say('카메라: 기기가 뜨거워지면 저절로 꺼지고, "감시 중" 표시는 남는다');
   await late.evaluate(() => { window.__app.hot = 3; });
   await late.waitForFunction(id => Object.values(JSON.parse(localStorage.getItem('mockdb')).answers[id]['20261302'].ev).some(x => x.t === 'camoff'), exId, { timeout: 30000 });   // 발열 확인은 20초마다

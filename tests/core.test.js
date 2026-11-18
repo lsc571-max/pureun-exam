@@ -208,8 +208,10 @@ test('카메라 경고 · 잠금 횟수와 카메라 상태', () => {
   const ev = (...ts) => Object.fromEntries(ts.map((t, i) => ['k' + i, { t, at: i + 1 }]));
   let s = C.leaveSummary(ev('leave', 'back', 'face', 'faceok'));
   assert.deepEqual([s.count, s.face, s.locks, s.warn, s.camOff], [1, 1, 0, 1, false]);
-  s = C.leaveSummary(ev('face', 'face', 'lock', 'face'));
-  assert.deepEqual([s.face, s.locks, s.warn], [3, 1, 1], '잠긴 뒤에는 경고를 다시 1회부터 셈');
+  s = C.leaveSummary(ev('face', 'face', 'lock', 'face', 'unlocked', 'face'));
+  assert.deepEqual([s.face, s.locks, s.warn], [4, 1, 1], '잠긴 동안의 경고는 세지 않고, 풀린 뒤 다시 1회부터 셈');
+  s = C.leaveSummary(ev('leave', 'back', 'unpin', 'back', 'lockout', 'leave', 'unlocked', 'leave', 'face'));
+  assert.deepEqual([s.count, s.locks, s.lwarn, s.warn], [4, 1, 1, 1], '화면 벗어남 잠금도 잠금 횟수에 들어가고, 잠긴 뒤 다시 셈');
   assert.equal(C.leaveSummary(ev('camoff')).camOff, true); assert.equal(C.leaveSummary(ev('camoff', 'camon')).camOff, false);
   assert.equal(C.leaveSummary(ev('nocam', 'leave')).camOff, true); assert.equal(C.leaveSummary(ev('leave')).camOff, false);
   for (const t of ['leave', 'unpin', 'face', 'lock', 'camoff', 'camfail', 'nocam']) assert.ok(C.EV_NAME[t], t);

@@ -290,17 +290,25 @@ export function histogram(totals, max, bins = 10) {
 // ev: { pushId: {t:'leave'|'back'|'unpin'|..., at} } → 시각 순 목록과 이탈 횟수
 export function leaveSummary(ev) {
   const list = Object.values(ev || {}).filter(e => e && e.t).sort((a, b) => (a.at || 0) - (b.at || 0));
-  let warn = 0;   // 마지막 잠금 뒤에 받은 카메라 경고 수 (2회가 되면 잠깁니다)
-  for (const e of list) { if (e.t === 'lock') warn = 0; else if (e.t === 'face') warn++; }
+  // 마지막 잠금 뒤에 받은 카메라 경고 수(warn)와 화면을 벗어난 수(lwarn). 정한 횟수가 되면 잠깁니다.
+  // 잠긴 동안(잠김 ~ 교수가 풂)의 경고·벗어남은 다음 잠금 횟수에 넣지 않습니다.
+  let warn = 0, lwarn = 0, held = false;
+  for (const e of list) {
+    if (e.t === 'lock' || e.t === 'lockout') { warn = 0; lwarn = 0; held = true; }
+    else if (e.t === 'unlocked') { warn = 0; lwarn = 0; held = false; }
+    else if (held) continue;
+    else if (e.t === 'face') warn++;
+    else if (e.t === 'leave' || e.t === 'unpin') lwarn++;
+  }
   const cam = list.filter(e => ['camoff', 'camon', 'camfail', 'nocam'].includes(e.t)).pop();
   return {
     list, count: list.filter(e => e.t === 'leave' || e.t === 'unpin').length,
     face: list.filter(e => e.t === 'face').length,     // 카메라 경고 횟수
-    locks: list.filter(e => e.t === 'lock').length,    // 화면이 잠긴 횟수
-    warn, camOff: !!cam && cam.t !== 'camon',          // 지금 카메라가 꺼져 있는지
+    locks: list.filter(e => e.t === 'lock' || e.t === 'lockout').length,    // 화면이 잠긴 횟수 (카메라 · 화면 벗어남)
+    warn, lwarn, camOff: !!cam && cam.t !== 'camon',          // 지금 카메라가 꺼져 있는지
   };
 }
-export const EV_NAME = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함', face: '카메라 경고 (얼굴이 벗어남)', faceok: '얼굴이 다시 보임', lock: '화면 잠김 (경고가 정한 횟수만큼 쌓임)',
+export const EV_NAME = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함', face: '카메라 경고 (얼굴이 벗어남)', faceok: '얼굴이 다시 보임', lock: '화면 잠김 (카메라 경고가 정한 횟수만큼 쌓임)', lockout: '화면 잠김 (화면을 정한 횟수만큼 벗어남)', unlocked: '교수가 잠금을 풂',
   camoff: '카메라 자동 꺼짐 (발열·배터리)', camon: '카메라 다시 켜짐', camfail: '카메라를 켜지 못함', nocam: '카메라 없이 시작' };
 // 얼굴 감지기가 주는 점(오른쪽 눈, 왼쪽 눈, 코끝, 입, 오른쪽 귀, 왼쪽 귀; x는 0~1)으로 고개가 좌우로 돌아간 각도를 어림합니다.
 // 정면이면 코가 두 귀의 한가운데에 있고, 고개를 돌릴수록 한쪽 귀에 가까워집니다.
