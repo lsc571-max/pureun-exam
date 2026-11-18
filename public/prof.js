@@ -271,7 +271,8 @@ function tabEdit() {
     ${m.status === 'running' ? '<div class="box warn"><b>시험이 진행 중입니다.</b> 지금 문항을 고치면 이미 푼 학생과 달라질 수 있어요.</div>' : ''}
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${s.n}문항 · ${s.total}점</h2><span class="sm">사지선다 ${s.choice} · 서술형 ${s.essay} · 난이도 상 ${s.byLevel['상']} 중 ${s.byLevel['중']} 하 ${s.byLevel['하']}</span></div>
       <div class="row"><button class="btn s" data-a="ed-paste">문항 묶음 붙여 넣기</button><button class="btn s gh" data-a="ed-replace">고른 문항만 교체 붙여 넣기</button><button class="btn s gh" data-a="ed-add">빈 문항 추가</button><button class="btn s gh" data-a="ed-del">고른 문항 삭제</button></div>
-      <div class="row"><button class="btn s gh" data-a="cp" data-k="make">① 문제 만들기 부탁문 복사</button><button class="btn s gh" data-a="cp" data-k="review">② 정확성 검토 부탁문 복사</button><button class="btn s gh" data-a="cp" data-k="final">③ 최종 확인 부탁문 복사</button></div>
+      <div class="ask"><div class="ask-t">AI 부탁문 <span>문제를 만들고 검토할 때 차례로 복사해 쓰세요</span></div>
+        <div class="row"><button class="btn s am" data-a="cp" data-k="make">① 문제 만들기</button><button class="btn s am" data-a="cp" data-k="review">② 정확성 검토</button><button class="btn s am" data-a="cp" data-k="final">③ 최종 확인</button></div></div>
       ${v.errors.length ? `<div class="box no"><b>고칠 곳 ${v.errors.length}군데</b> — 빨간 문항을 확인하세요. 고치기 전에는 시험을 열 수 없습니다.${v.errors.filter(e => e.i < 0).map(e => '\n' + esc(e.msg)).join('')}</div>` : s.n ? '<div class="box ok">문항 검사를 통과했습니다.</div>' : ''}
     </div>
     ${P.pages.map((p, i) => {
