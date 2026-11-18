@@ -197,7 +197,7 @@ function tabRun() {
     draft: `<button class="btn s am" data-a="ex-status" data-s="open">학생에게 열기 (대기실)</button>`,
     open: `<button class="btn s am" data-a="ex-start">시험 시작 (모든 반 함께)</button><button class="btn s gh" data-a="ex-status" data-s="draft">대기실 닫기</button>`,
     running: `<button class="btn s gh" data-a="ex-extend">시간 5분 연장</button><button class="btn s red" data-a="ex-end">시험 종료 (모든 반 함께)</button>`,
-    ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (못 본 학생 응시)</button>'}`,
+    ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '<button class="btn s gh" data-a="ex-reopen">못 본 학생 열기 (결과 공개 취소 후)</button>' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (못 본 학생 응시)</button>'}`,
   }[m.status || 'draft'];
   const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 모든 반이 동시에 시작합니다.', running: `${hhmmss(m.startAt)} 시작 · ${hhmmss(m.endAt)} 종료 예정. 시간이 되면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 장문형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
   const scores = rows.filter(r => r.a && r.a.startedAt).map(r => C.scoreStudent(sheet, key, r.a.a, P.essay[r.sid]).total);
@@ -206,7 +206,7 @@ function tabRun() {
       <div class="sm">${esc(guide)}</div>
       ${v.errors.length ? `<div class="box no">문항에 고칠 곳이 ${v.errors.length}군데 있어요. <b>문항</b> 탭에서 확인해 주세요.</div>` : ''}
       <div class="row">${btns}<button class="btn s gh" data-a="ex-settings">시험 설정</button><button class="btn s gh" data-a="ex-copy">시험 복사 (재시험용)</button></div>
-      ${m.status === 'ended' && m.released ? '<div class="sm">결과를 공개한 상태에서는 정답이 보이므로 다시 열 수 없습니다. 다시 열려면 먼저 "결과 공개 취소"를 누르거나, "시험 복사"로 새 시험을 만드세요.</div>' : ''}</div>
+      ${m.status === 'ended' && m.released ? '<div class="sm">결과를 공개한 상태에서는 정답이 학생에게 보이므로, <b>못 본 학생 열기</b>를 누르면 결과 공개를 먼저 취소합니다. 제출한 학생은 다시 풀 수 없고, 답과 점수는 그대로 남습니다. 다시 공개하기 전까지 학생은 결과를 볼 수 없습니다.</div>' : ''}</div>
     <div class="charts">
       <div class="panel"><h2>응시 현황</h2>${donut([{ label: '제출', n: sub.length, c: COL.sub }, { label: '응시 중', n: go.length, c: COL.go }, { label: '입장만 함', n: wait.length, c: COL.in }], `${sub.length}/${rows.length}`)}</div>
       <div class="panel"><h2>지금까지의 점수 분포</h2>${histChart(scores, sheet.reduce((n, q) => n + q.pts, 0))}<div class="sm">자동 채점 기준이며 학생에게는 보이지 않습니다.</div></div>
@@ -238,7 +238,7 @@ on('ex-end', async () => {
   toast('종료하는 중입니다. 학생들의 마지막 답안을 받고 있어요.', 6000);
 });
 // 끝난 시험을 다시 엽니다 (시험을 못 본 학생용)
-on('ex-resume', () => {
+function resumeModal() {
   const m = meta(), started = Object.values(P.answers).filter(a => a.startedAt && !a.submittedAt).length;
   modal(`<h2>시험 다시 열기</h2>
     <div class="txt">정한 시간 동안 시험이 다시 진행됩니다. 이미 제출한 학생은 다시 풀 수 없습니다.</div>
@@ -246,6 +246,12 @@ on('ex-resume', () => {
     <button class="check on" data-a="rs-lock" id="rs-lock"><i>✓</i>이미 응시한 학생은 제출 처리하기</button>
     <div class="sm">켜 두면 <b>시험을 아예 보지 않은 학생만</b> 응시할 수 있습니다. 끄면 응시했지만 제출하지 않은 학생${started ? ` ${started}명` : ''}도 이어서 풀 수 있습니다.</div>
     <div class="row"><button class="btn gh" data-a="modal-close">취소</button><button class="btn am" data-a="rs-go">다시 열기</button></div>`);
+}
+on('ex-resume', resumeModal);
+on('ex-reopen', async () => {
+  if (!(await confirmBox('결과 공개를 취소하고 다시 열까요?', '정답과 해설이 학생에게 다시 숨겨집니다. 이미 본 학생도 다시 공개할 때까지 결과를 볼 수 없습니다.', '취소하고 다시 열기', { danger: true }))) return;
+  await setMeta({ released: false });
+  resumeModal();
 });
 on('rs-lock', el => el.classList.toggle('on'));
 on('rs-go', async () => {
