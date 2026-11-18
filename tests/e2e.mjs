@@ -549,7 +549,10 @@ try {
 
   say('끝난 시험 다시 열기: 못 본 학생만 응시한다');
   await act(prof, 'p-tab', '[data-t="run"]');
-  await act(prof, 'ex-settings'); await prof.click('#s-cam'); await act(prof, 's-save');   // 다시 여는 시험은 카메라 얼굴 확인을 켬
+  await act(prof, 'ex-settings'); await prof.click('#s-cam');   // 다시 여는 시험은 카메라 얼굴 확인을 켬
+  assert.equal(await prof.inputValue('#s-camlock'), '3', '잠그는 경고 횟수의 기본값이 3이 아님');
+  await prof.fill('#s-camlock', '3'); await act(prof, 's-save');
+  assert.equal((await db(prof)).exams[exId].camLock, 3);
   await prof.waitForFunction(() => document.getElementById('modal').hidden);
   await act(prof, 'ex-resume');
   await prof.fill('#rs-min', '3'); await act(prof, 'rs-go');

@@ -488,16 +488,18 @@ async function camStart() {
 }
 function camStop() { if (X && X.watch) { X.watch.stop(); X.watch = null; } }
 // 얼굴이 몇 초 넘게 안 보임(또는 고개가 돌아감): 화면을 검게 가리고 경고. 경고가 2회 쌓이면 잠급니다.
-const LOCK_AT = 3;   // 카메라 경고가 이만큼 쌓이면 화면을 잠급니다
+// 카메라 경고가 이만큼 쌓이면 화면을 잠급니다. 교수님이 시험 설정에서 정하고(기본 3회), 0이면 잠그지 않고 경고만 합니다.
+const lockAt = () => { const v = X && (S.exams[X.id] || {}).camLock; return Number.isInteger(v) && v >= 0 ? v : 3; };
 function faceAway(why) {
   if (!X || X.done || locked()) return;
   X.camWarn++; logEv('face');
-  if (X.camWarn >= LOCK_AT) { X.camWarn = 0; X.locks++; logEv('lock'); return showLock(); }
-  showGuard(`<div class="h1">${why === 'turn' ? '고개가 돌아가 있습니다' : '얼굴이 보이지 않습니다'}</div><div class="txt">화면을 정면으로 봐 주세요. 얼굴이 다시 보이면 시험 화면이 돌아옵니다.\n<b>경고 ${X.camWarn}회</b> — ${LOCK_AT - X.camWarn === 1 ? '한 번 더' : `${LOCK_AT - X.camWarn}번 더`} 받으면 화면이 잠깁니다.</div>`, 'face');
+  const LOCK_AT = lockAt();
+  if (LOCK_AT && X.camWarn >= LOCK_AT) { X.camWarn = 0; X.locks++; logEv('lock'); return showLock(); }
+  showGuard(`<div class="h1">${why === 'turn' ? '고개가 돌아가 있습니다' : '얼굴이 보이지 않습니다'}</div><div class="txt">화면을 정면으로 봐 주세요. 얼굴이 다시 보이면 시험 화면이 돌아옵니다.\n<b>경고 ${X.camWarn}회</b> ${LOCK_AT ? `— ${LOCK_AT - X.camWarn === 1 ? '한 번 더' : `${LOCK_AT - X.camWarn}번 더`} 받으면 화면이 잠깁니다.` : '— 경고는 교수님 화면에 기록됩니다.'}</div>`, 'face');
 }
 function faceBack() { if (X && !X.done && X.guardKind === 'face') { hideGuard(); logEv('faceok'); resumeTime(); } }
 function showLock() {
-  showGuard(`<div class="h1">화면이 잠겼습니다</div><div class="txt">카메라 경고가 ${LOCK_AT}회 쌓였습니다.\n<b>손을 들고 교수님께 확인받으세요.</b>\n교수님이 풀어 주면 이어서 풀 수 있습니다. 시험 시간은 계속 흐릅니다.</div><div class="sm" style="color:#c9d6cf">잠금 ${X.locks}회</div>`, 'lock');
+  showGuard(`<div class="h1">화면이 잠겼습니다</div><div class="txt">카메라 경고가 ${lockAt() || X.camWarn}회 쌓였습니다.\n<b>손을 들고 교수님께 확인받으세요.</b>\n교수님이 풀어 주면 이어서 풀 수 있습니다. 시험 시간은 계속 흐릅니다.</div><div class="sm" style="color:#c9d6cf">잠금 ${X.locks}회</div>`, 'lock');
 }
 // 기기가 뜨겁거나(앱) 배터리가 모자라면(웹) 카메라를 저절로 끄고, 괜찮아지면 다시 켭니다. "감시 중" 표시는 그대로 둡니다.
 async function camPolicy() {
