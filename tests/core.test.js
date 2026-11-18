@@ -228,6 +228,16 @@ test('고개 돌린 각도 어림: 정면은 0도, 30도를 넘으면 걸러진�
   assert.equal(C.fmtDur(200), '3분 20초'); assert.equal(C.fmtDur(45), '45초'); assert.equal(C.fmtDur(120), '2분'); assert.equal(C.fmtDur(undefined), '0초');
 });
 
+test('고개 위아래 어림: 정면은 0도, 숙이거나 들면 각도가 커진다', () => {
+  // 옆에서 본 얼굴: 눈(높이 0, 앞 0) · 코끝(높이 0.5H, 앞으로 0.55H) · 입(높이 H, 앞 0). 고개를 p도 숙인 모습을 화면에 비춤
+  const face = deg => { const p = deg * Math.PI / 180, H = 0.2, y = (h, z) => 0.3 + h * Math.cos(p) + z * Math.sin(p);
+    return [{ x: 0.45, y: y(0, 0) }, { x: 0.55, y: y(0, 0) }, { x: 0.5, y: y(0.5 * H, C.NOSE_DEPTH * H) }, { x: 0.5, y: y(H, 0) }]; };
+  const base = C.faceRatio(face(0));
+  assert.ok(Math.abs(base - 0.5) < 1e-9);
+  for (const d of [0, 10, 20, 30, -15, -30]) assert.ok(Math.abs(C.facePitch(C.faceRatio(face(d)), base) - d) < 0.5, `${d}도 → ${C.facePitch(C.faceRatio(face(d)), base)}`);
+  assert.equal(C.facePitch(null, base), 0); assert.equal(C.facePitch(0.6, null), 0); assert.equal(C.faceRatio([]), null);
+});
+
 test('반 이름 · 학번 · 이름 다듬기', () => {
   assert.equal(C.normSid(' 2026 1234 '), '20261234'); assert.equal(C.normName(' 홍 길동 '), '홍길동');
   assert.equal(C.normCls('  1학년   A반 '), '1학년 A반');

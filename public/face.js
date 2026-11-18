@@ -1,6 +1,6 @@
 // 전면 카메라 얼굴 확인 — 영상은 어디에도 저장하거나 보내지 않고, 기기 안에서 "얼굴이 보이는지"만 봅니다.
 // 발열과 배터리 부담을 줄이려고 낮은 해상도로 1초에 두 번이 안 되게 확인합니다.
-import { faceYaw } from './core.js';
+import { faceYaw, faceRatio, facePitch } from './core.js';
 
 const LIB = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
 const MODEL = './vendor/blaze_face_short_range.tflite';
@@ -34,7 +34,8 @@ export async function testCamera() {
 
 // 감시 시작. onAway(why): 얼굴이 AWAY_MS 동안 안 보이거나('gone') 돌아가 있음('turn'). onBack(): 다시 보임.
 // 돌려주는 stop() 을 부르면 카메라가 꺼집니다.
-export async function startWatch({ onAway, onBack, yawLimit = YAW_LIMIT, awayMs = AWAY_MS }) {
+export async function startWatch({ onAway, onBack, yawLimit = YAW_LIMIT, pitchLimit = 25, awayMs = AWAY_MS }) {
+  const bases = []; let base = null;   // 정면일 때의 위아래 비율 (처음 정면을 본 몇 번으로 정함)
   const f = fake();
   let stream = null, video = null, det = null;
   if (!f) {
@@ -54,15 +55,17 @@ export async function startWatch({ onAway, onBack, yawLimit = YAW_LIMIT, awayMs 
     if (video.readyState < 2) return null;
     const r = det.detectForVideo(video, performance.now());
     const d = r && r.detections && r.detections[0];
-    if (!d) return { face: false, yaw: 0 };
-    return { face: true, yaw: faceYaw(d.keypoints || []) };
+    if (!d) return { face: false, yaw: 0, pitch: 0 };
+    const kp = d.keypoints || [], yaw = faceYaw(kp), ratio = faceRatio(kp);
+    if (base === null && ratio !== null && Math.abs(yaw) < 15) { bases.push(ratio); if (bases.length >= 5) base = bases.slice().sort((a, b) => a - b)[2]; }
+    return { face: true, yaw, pitch: facePitch(ratio, base) };
   };
   const timer = setInterval(() => {
     if (stopped || document.hidden) { badSince = 0; return; }   // 화면이 가려진 동안은 따로(이탈로) 기록됩니다
     let r;
     try { r = look(); fails = 0; } catch (e) { if (++fails > 10) { badSince = 0; } return; }
     if (!r) return;
-    const why = !r.face ? 'gone' : Math.abs(r.yaw) > yawLimit ? 'turn' : '';
+    const why = !r.face ? 'gone' : Math.abs(r.yaw) > yawLimit ? 'turn' : Math.abs(r.pitch || 0) > pitchLimit ? 'tilt' : '';
     const now = Date.now();
     if (why) {
       if (!badSince) badSince = now;

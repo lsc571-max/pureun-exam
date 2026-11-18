@@ -395,9 +395,10 @@ on('ex-settings', () => {
     <label class="f">화면을 벗어나면 잠그는 횟수 — 1회째는 경고, 이 횟수가 되면 잠금 · 0이면 잠그지 않고 기록만<input class="in" id="s-leavelock" type="number" min="0" max="20" value="${Number.isInteger(m.leaveLock) && m.leaveLock >= 0 ? m.leaveLock : 2}"></label>
     <div class="sm">다른 앱이나 다른 화면으로 갔다가 돌아오면 시험 화면을 검게 가리고 경고합니다(아이폰 포함). 정한 횟수가 되면 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 새로 고침도 한 번 벗어난 것으로 셉니다.</div>
     <button class="check ${m.cam ? 'on' : ''}" data-a="s-practice" id="s-cam"><i>✓</i>전면 카메라로 얼굴 확인</button>
-    <div class="sm">켜면 시험 중 얼굴이 화면에서 사라지거나 고개가 정한 각도보다 더 돌아간 상태가 정한 시간 넘게 이어질 때 화면을 가리고 경고를 기록합니다. 경고가 정한 횟수만큼 쌓이면 화면이 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 영상은 저장하지 않습니다. 기기가 뜨거워지거나 배터리가 아래 값보다 적으면 카메라를 저절로 끕니다.</div>
+    <div class="sm">켜면 시험 중 얼굴이 화면에서 사라지거나 고개가 정한 각도보다 더 돌아가거나(좌우) 숙이거나 든(위아래) 상태가 정한 시간 넘게 이어질 때 화면을 가리고 경고를 기록합니다. 경고가 정한 횟수만큼 쌓이면 화면이 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 영상은 저장하지 않습니다. 기기가 뜨거워지거나 배터리가 아래 값보다 적으면 카메라를 저절로 끕니다.</div>
     <div class="pgrid">
-      <label class="pcell">고개 각도(도)<input class="in" id="s-camyaw" type="number" min="5" max="90" value="${Number.isFinite(m.camYaw) ? m.camYaw : 30}"><small>이보다 더 돌리면 경고</small></label>
+      <label class="pcell">위아래 각도(도)<input class="in" id="s-campitch" type="number" min="5" max="90" value="${Number.isFinite(m.camPitch) ? m.camPitch : 25}"><small>이보다 더 숙이거나 들면 경고</small></label>
+      <label class="pcell">좌우 각도(도)<input class="in" id="s-camyaw" type="number" min="5" max="90" value="${Number.isFinite(m.camYaw) ? m.camYaw : 30}"><small>이보다 더 돌리면 경고</small></label>
       <label class="pcell">이어진 시간(초)<input class="in" id="s-camsec" type="number" min="1" max="60" value="${Number.isFinite(m.camSec) ? m.camSec : 3}"><small>이만큼 계속되면 경고</small></label>
       <label class="pcell">잠그는 경고 횟수<input class="in" id="s-camlock" type="number" min="0" max="20" value="${Number.isInteger(m.camLock) && m.camLock >= 0 ? m.camLock : 3}"><small>0이면 잠그지 않음</small></label>
     </div>
@@ -413,13 +414,13 @@ on('ex-settings', () => {
 on('s-practice', el => el.classList.toggle('on'));
 on('s-save', async () => {
   const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), practice = $('s-prac').classList.contains('on'), appOnly = $('s-app').classList.contains('on'), cam = $('s-cam').classList.contains('on'), camBatt = Math.max(0, Math.min(100, Math.round(+$('s-batt').value || 0))), camLock = Math.max(0, Math.min(20, Math.round(+$('s-camlock').value || 0))),
-    camYaw = Math.max(5, Math.min(90, Math.round(+$('s-camyaw').value || 30))), camSec = Math.max(1, Math.min(60, Math.round(+$('s-camsec').value || 3))), leaveLock = Math.max(0, Math.min(20, Math.round(+$('s-leavelock').value || 0)));
+    camYaw = Math.max(5, Math.min(90, Math.round(+$('s-camyaw').value || 30))), camPitch = Math.max(5, Math.min(90, Math.round(+$('s-campitch').value || 25))), camSec = Math.max(1, Math.min(60, Math.round(+$('s-camsec').value || 3))), leaveLock = Math.max(0, Math.min(20, Math.round(+$('s-leavelock').value || 0)));
   const late = Math.round(+$('s-late').value);
   const noticeBody = $('s-notice').value.trim(), endBody = $('s-end').value.trim();   // 확인 창이 뜨면 이 칸들이 사라지므로 미리 읽어 둡니다
   if (!title || !(minutes >= 1 && minutes <= 300) || !(late >= 0 && late <= 300)) return toast('이름과 시간을 확인해 주세요.');
   if (practice && ['open', 'running'].includes(meta().status)) return toast('시험이 열려 있는 동안에는 문제풀이 공개를 켤 수 없어요.', 4000);
   if (practice && !meta().practice && meta().status !== 'draft' && !(await confirmBox('시험 문항을 문제풀이로 공개할까요?', '학생이 정답과 해설을 모두 볼 수 있게 됩니다.', '공개', { danger: true }))) return;
-  await setMeta({ title, minutes, late, practice, appOnly, cam, camBatt, camLock, camYaw, camSec, leaveLock, notice: { title: '', body: noticeBody }, end: { title: '고생하셨습니다', body: endBody } }); closeModal(); toast('저장했어요.');
+  await setMeta({ title, minutes, late, practice, appOnly, cam, camBatt, camLock, camYaw, camPitch, camSec, leaveLock, notice: { title: '', body: noticeBody }, end: { title: '고생하셨습니다', body: endBody } }); closeModal(); toast('저장했어요.');
 });
 on('ex-wipe', async () => {
   if (!(await confirmBox('답안을 모두 지울까요?', '이 시험의 모든 학생 답안, 이탈 기록, 장문형 점수가 지워지고 시험이 "준비 중"으로 돌아갑니다. <b>되돌릴 수 없습니다.</b>', '모두 지우기', { danger: true }))) return;

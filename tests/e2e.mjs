@@ -608,8 +608,8 @@ try {
   await late.evaluate(() => { window.__app.face = { face: true, yaw: 10 }; });
   await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 4000 });
   say('카메라: 고개를 30도 넘게 돌려 경고 3회가 되면 잠기고, 교수가 풀어 준다');
-  await late.evaluate(() => { window.__app.face = { face: true, yaw: 45 }; });
-  await late.waitForFunction(() => { const g = document.getElementById('guard'); return !g.hidden && /고개가 돌아가 있습니다.*경고 2회.*한 번 더/s.test(g.textContent); }, null, { timeout: 8000 });   // 2회는 경고만
+  await late.evaluate(() => { window.__app.face = { face: true, yaw: 0, pitch: 35 }; });   // 고개를 숙임(위아래)
+  await late.waitForFunction(() => { const g = document.getElementById('guard'); return !g.hidden && /고개를 숙이거나 들고 있습니다.*경고 2회.*한 번 더/s.test(g.textContent); }, null, { timeout: 8000 });   // 2회는 경고만
   await late.evaluate(() => { window.__app.face = { face: true, yaw: 0 }; });
   await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 4000 });
   await late.evaluate(() => { window.__app.face = { face: true, yaw: 45 }; });
@@ -732,10 +732,13 @@ try {
   assert.match(await prof.textContent('.who'), new RegExp(mySid));
   for (let i = 0; i < 5; i++) await prof.click('.bar [data-a="brand"]');
   await prof.waitForSelector('[data-a="new-exam"]');
-  const realStu = await ctx.newPage(); await realStu.goto(BASE + '/?mock=1');   // 교수님이 로그인한 적 없는 기기에서는 5번 눌러도 아무 일 없음
+  const realStu = await ctx.newPage(); await realStu.goto(BASE + '/?mock=1');   // 어느 기기든 학생 화면의 '푸른시험'을 5번 누르면 교수 로그인 화면(로그인해야 들어감)
   await realStu.evaluate(() => localStorage.removeItem('pureun:prof')); await realStu.reload(); await realStu.waitForSelector('#e-sid');
-  for (let i = 0; i < 5; i++) await realStu.click('[data-a="brand"]');
-  await realStu.waitForTimeout(500); assert.ok(await realStu.isVisible('#e-sid'), '학생 기기에서 5번 눌러 교수 화면으로 넘어감');
+  assert.equal(await realStu.locator('a[href*="prof"]').count(), 0, '학생 화면에 교수용 링크가 남아 있음');
+  for (let i = 0; i < 4; i++) await realStu.click('[data-a="brand"]');
+  await realStu.waitForTimeout(300); assert.ok(await realStu.isVisible('#e-sid'), '4번만 눌렀는데 넘어감');
+  await realStu.click('[data-a="brand"]');
+  await realStu.waitForSelector('[data-a="glogin"]');
   await realStu.close();
   await prof.evaluate(() => localStorage.setItem('pureun:prof', '1'));
 

@@ -320,6 +320,19 @@ export function faceYaw(kp) {
   if (!between) return 90 * Math.sign(dR - dL || 1);                        // 귀 바깥으로 나갔으면 옆얼굴
   return Math.atan((dR - dL) / (dR + dL) / 1.1) * 180 / Math.PI;
 }
+// 고개를 위아래로 숙이거나 든 정도. 눈 높이에서 입 높이까지 중 코끝이 어디쯤 있는지(비율)를 봅니다.
+// 정면일 때의 비율(base)은 사람마다 달라서, 시험 시작 직후 정면을 볼 때 재서 씁니다.
+// 코가 얼굴 면보다 앞으로 나와 있으므로, 고개를 숙이면 코끝이 입 쪽으로, 들면 눈 쪽으로 움직여 보입니다.
+export function faceRatio(kp) {
+  if (!kp || kp.length < 4) return null;
+  const eyeY = (kp[0].y + kp[1].y) / 2, h = kp[3].y - eyeY;
+  return h > 1e-6 ? (kp[2].y - eyeY) / h : null;
+}
+export const NOSE_DEPTH = 0.55;   // 코가 앞으로 나온 정도 ÷ 눈~입 높이 (보통 얼굴의 비율)
+export function facePitch(ratio, base) {
+  if (ratio === null || ratio === undefined || base === null || base === undefined) return 0;
+  return Math.atan((ratio - base) / NOSE_DEPTH) * 180 / Math.PI;   // +: 숙임, -: 듦
+}
 // 풀이 시간(초)을 "3분 20초"처럼
 export const fmtDur = sec => { sec = Math.max(0, Math.round(sec || 0)); const m = Math.floor(sec / 60), r = sec % 60; return m ? `${m}분${r ? ' ' + r + '초' : ''}` : `${r}초`; };
 

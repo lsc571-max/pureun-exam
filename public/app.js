@@ -88,7 +88,7 @@ const testRibbon = () => (TEST ? `<div class="testband">테스트 학생 ${TEST}
 // '푸른시험' 글자를 5번 빠르게 누르면 교수 화면 ↔ 테스트 학생 화면 (교수님이 로그인한 적 있는 기기에서만)
 let brandN = 0, brandT = 0;
 on('brand', () => {
-  if (LS.get(PROF_HERE) !== '1' || (X && !X.done && !TEST)) return;
+  if (X && !X.done && !TEST) return;   // 시험 푸는 중에는 안 됨. 교수 화면은 교수 구글 계정으로 로그인해야 들어갈 수 있습니다
   const now = Date.now(); brandN = now - brandT < 1500 ? brandN + 1 : 1; brandT = now;
   if (brandN < 5) return;
   brandN = 0;
@@ -140,7 +140,7 @@ function viewEntry(err = '') {
     ${err ? `<div class="box no">${esc(err)}</div>` : ''}
     <button class="btn am" style="flex:none" data-a="enter">입장</button>
     <div class="sm">학번과 이름을 정확히 입력하세요. 처음 입장한 이 기기에서만 응시할 수 있습니다.</div>
-    <div style="margin-top:auto;text-align:center">${IS_ANDROID && !APP ? `<a class="link" href="${APK_URL}">안드로이드 앱 내려받기</a> · ` : ''}<a class="link" href="./?prof=1">교수용</a></div>`, true);
+    <div style="margin-top:auto;text-align:center">${IS_ANDROID && !APP ? `<a class="link" href="${APK_URL}">안드로이드 앱 내려받기</a>` : ''}</div>`, true);
 }
 // 입력하던 글자를 지우지 않고 화면만 다시 그립니다
 function keepEntry(err = '') {
@@ -488,7 +488,7 @@ async function camStart() {
   if (!X || X.watch || X.done || X.camStarting) return;
   X.camStarting = true; const mine = X;
   try {
-    const w = await startWatch({ onAway: faceAway, onBack: faceBack, yawLimit: rule('camYaw', 30, 5, 90), awayMs: rule('camSec', 3, 1, 60) * 1000 });
+    const w = await startWatch({ onAway: faceAway, onBack: faceBack, yawLimit: rule('camYaw', 30, 5, 90), pitchLimit: rule('camPitch', 25, 5, 90), awayMs: rule('camSec', 3, 1, 60) * 1000 });
     if (X !== mine || mine.done) return w.stop();
     X.watch = w;
     if (X.camDown) { X.camDown = false; logEv('camon'); }
@@ -507,7 +507,7 @@ function faceAway(why) {
   X.camWarn++; logEv('face');
   const LOCK_AT = lockAt();
   if (LOCK_AT && X.camWarn >= LOCK_AT) { X.camWarn = 0; X.locks++; logEv('lock'); return showLock(); }
-  showGuard(`<div class="h1">${why === 'turn' ? '고개가 돌아가 있습니다' : '얼굴이 보이지 않습니다'}</div><div class="txt">화면을 정면으로 봐 주세요. 얼굴이 다시 보이면 시험 화면이 돌아옵니다.\n<b>경고 ${X.camWarn}회</b> ${LOCK_AT ? `— ${LOCK_AT - X.camWarn === 1 ? '한 번 더' : `${LOCK_AT - X.camWarn}번 더`} 받으면 화면이 잠깁니다.` : '— 경고는 교수님 화면에 기록됩니다.'}</div>`, 'face');
+  showGuard(`<div class="h1">${why === 'turn' ? '고개가 돌아가 있습니다' : why === 'tilt' ? '고개를 숙이거나 들고 있습니다' : '얼굴이 보이지 않습니다'}</div><div class="txt">화면을 정면으로 봐 주세요. 얼굴이 다시 보이면 시험 화면이 돌아옵니다.\n<b>경고 ${X.camWarn}회</b> ${LOCK_AT ? `— ${LOCK_AT - X.camWarn === 1 ? '한 번 더' : `${LOCK_AT - X.camWarn}번 더`} 받으면 화면이 잠깁니다.` : '— 경고는 교수님 화면에 기록됩니다.'}</div>`, 'face');
 }
 function faceBack() { if (X && !X.done && X.guardKind === 'face') { hideGuard(); logEv('faceok'); resumeTime(); } }
 function showLock(why = 'face') {
