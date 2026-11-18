@@ -246,8 +246,9 @@ try {
   await prof.waitForSelector('[data-a="g-set"]');
   assert.match(await prof.textContent('#pmain'), /서술형 답안입니다/);
   assert.ok(!/홍길동/.test(await prof.textContent('#pmain')), '이름 가리기가 안 됨');
-  await prof.click('[data-a="g-set"][data-v="7"]');
-  await prof.waitForFunction(() => document.querySelector('[data-a="g-set"][data-v="7"]').classList.contains('on'));
+  const card = prof.locator('.panel[data-sid]', { hasText: '서술형 답안입니다' });   // 이름이 가려져 있으므로 답안 내용으로 찾음
+  await card.locator('[data-a="g-set"][data-v="7"]').click();
+  await prof.waitForFunction(() => document.querySelector('.panel[data-sid="20261234"] [data-a="g-set"][data-v="7"]').classList.contains('on'));
   await shot(prof, 'p4-grade');
 
   say('결과: 순위 · 정답률 · 이탈');

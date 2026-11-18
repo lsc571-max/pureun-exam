@@ -20,6 +20,9 @@ const app = $('app');
 const who = () => (S.me ? `${S.me.cls}반 ${S.me.sid} ${S.me.name}` : '');
 const LS = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
 
+// 인터넷이 끊기면 서버 요청이 끝없이 기다리므로, 정해진 시간 뒤에는 실패로 봅니다.
+const within = (p, ms = 8000) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('network timeout')), ms))]);
+
 /* ================= 시작 · 로그인 ================= */
 let unsubExams = null, profMod = null;
 async function boot() {
@@ -166,7 +169,7 @@ const ansPath = () => `answers/${X.id}/${S.me.sid}`;
 async function startExam() {
   const id = N.id, m = S.exams[id];
   try {
-    const [sheetRec, imgs, my] = await Promise.all([be.get('sheets/' + id), be.get('images/' + id), be.get(`answers/${id}/${S.me.sid}`)]);
+    const [sheetRec, imgs, my] = await within(Promise.all([be.get('sheets/' + id), be.get('images/' + id), be.get(`answers/${id}/${S.me.sid}`)]), 15000);
     const sheet = parse(sheetRec, []);
     if (!sheet.length) return toast('문제를 불러오지 못했어요.');
     const mine = my || {};
@@ -183,7 +186,7 @@ async function startExam() {
       onStatus: paintSave,
     });
     X.store.load(mine.a || {});
-    await be.update(ansPath(), { startedAt: mine.startedAt || be.now(), sess: X.sess, dev: (APP ? 'app ' : 'web ') + navigator.userAgent.slice(0, 200) });
+    await within(be.update(ansPath(), { startedAt: mine.startedAt || be.now(), sess: X.sess, dev: (APP ? 'app ' : 'web ') + navigator.userAgent.slice(0, 200) }));
     X.unsubs.push(be.on(ansPath() + '/sess', v => { if (X && !X.done && v && v !== X.sess) otherWindow(); }));
     X.unsubs.push(be.on(ansPath() + '/submittedAt', v => { if (X && !X.done && v) finish(true); }));
     X.unsubs.push(be.onConnected(c => { if (X) { X.conn = c; paintSave(); } }));
@@ -287,7 +290,7 @@ async function finish(auto) {
   X.done = true; flushTyping();
   const id = X.id, store = X.store;
   let sent = false;
-  try { await store.flush(); await be.update(ansPath(), { submittedAt: be.now() }); sent = true; } catch (e) { sent = false; }
+  try { await within(Promise.all([store.flush(), be.update(ansPath(), { submittedAt: be.now() })])); sent = true; } catch (e) { sent = false; }
   if (!sent && !auto) { X.done = false; return toast('제출하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.', 4000); }
   if (sent || !store.pending()) store.close();
   N = { id, my: { submittedAt: sent ? be.now() : 0, a: store.all() }, auto, unsent: !sent && store.pending() > 0 };
