@@ -79,6 +79,22 @@ test('입장: 반·학번·이름이 명단과 모두 맞아야 한다', async (
   await assertSucceeds(stu('u1').ref('users/u1').get());
 });
 
+test('명단을 올리지 않으면 반·학번·이름만 입력해 입장한다 (기기 묶음은 그대로)', async () => {
+  await env.withSecurityRulesDisabled(ctx => ctx.database().ref('roster').remove());
+  await assertFails(enter('u1', '12', '홍길동', 'A'));            // 학번이 너무 짧음
+  await assertFails(enter('u1', '2026/1234', '홍길동', 'A'));     // 학번에 쓸 수 없는 글자
+  await assertFails(enter('u1', '20261234', '', 'A'));            // 이름 없음
+  await assertFails(enter('u1', '20261234', '홍길동', '가'));      // 반이 A·B 같은 글자가 아님
+  await assertFails(stu('u1').ref('bind/20261234').set('u1'));    // 이름 없이 묶기만
+  await assertSucceeds(enter('u1', '20261234', '홍길동', 'A'));
+  await assertFails(enter('u2', '20261234', '홍길동', 'A'));      // 같은 학번으로 두 번째 기기
+  await assertFails(enter('u1', '20269999', '홍길동', 'A'));      // 한 기기로 두 학번
+  await assertSucceeds(stu('u1').ref('sheets/run').get());
+  await assertSucceeds(stu('u1').ref('answers/run/20261234/a/q1').set(1));
+  await assertFails(stu('u2').ref('answers/run/20261234/a/q1').set(1));
+  await assertSucceeds(prof().ref('users').get());                // 교수는 입장한 학생 목록을 본다
+});
+
 test('두 기기 금지: 이미 묶인 학번으로 다른 기기는 못 들어온다', async () => {
   await assertSucceeds(enter('u1', '20261234', '홍길동', 'A'));
   await assertFails(enter('u2', '20261234', '홍길동', 'A'));

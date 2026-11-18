@@ -72,7 +72,7 @@ function viewEntry(err = '') {
     <input class="in" id="e-name" autocomplete="off" placeholder="이름" maxlength="20">
     ${err ? `<div class="box no">${esc(err)}</div>` : ''}
     <button class="btn am" style="flex:none" data-a="enter">입장</button>
-    <div class="sm">명단에 있는 반·학번·이름만 들어올 수 있어요. 처음 입장한 이 기기에서만 응시할 수 있습니다.</div>
+    <div class="sm">학번과 이름을 정확히 입력하세요. 처음 입장한 이 기기에서만 응시할 수 있습니다.</div>
     <div style="margin-top:auto;text-align:center"><a class="link" href="./?prof=1">교수용</a></div>`, true);
 }
 on('cls', el => { entryCls = el.dataset.c; const sid = $('e-sid').value, nm = $('e-name').value; viewEntry(); $('e-sid').value = sid; $('e-name').value = nm; });
@@ -86,7 +86,7 @@ on('enter', async () => {
     await be.update('', { ['users/' + S.user.uid]: { sid, name, cls, at: be.now() }, ['bind/' + sid]: S.user.uid });
     S.me = { sid, name, cls }; viewHome();
   } catch (e) {
-    again(/PERMISSION/i.test(String(e.code || e.message)) ? '입장하지 못했어요. 반·학번·이름이 명단과 다르거나, 이 학번으로 이미 다른 기기에서 입장했습니다. 교수님께 말씀해 주세요.' : errText(e));
+    again(/PERMISSION/i.test(String(e.code || e.message)) ? '입장하지 못했어요. 이 학번으로 이미 다른 기기에서 입장했거나, 반·학번·이름이 명단과 다릅니다. 교수님께 말씀해 주세요.' : errText(e));
   }
 });
 

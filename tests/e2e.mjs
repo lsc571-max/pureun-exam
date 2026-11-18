@@ -51,11 +51,20 @@ try {
   await act(prof, 'glogin');
   await prof.waitForSelector('[data-a="new-exam"]');
 
+  say('명단이 없으면 반·학번·이름만 입력해 입장한다');
+  const free = await ctx.newPage(); watch(free, '명단 없는 학생');
+  await free.goto(BASE + '/?mock=1'); await free.waitForSelector('#e-sid');
+  await act(free, 'enter'); await free.waitForSelector('.box.no');                       // 반을 안 고름
+  await act(free, 'cls', '[data-c="B"]'); await free.fill('#e-sid', '20269999'); await free.fill('#e-name', '자유입장'); await act(free, 'enter');
+  await free.waitForFunction(() => /B반 20269999 자유입장/.test(document.body.textContent));
+  await prof.waitForFunction(() => /학생 \(1명\)/.test(document.querySelector('[data-a="roster"]').textContent));
+  await free.close();
+
   say('명단 붙여 넣기');
   await act(prof, 'roster');
   await prof.fill('#r-text', '반\t학번\t이름\nA\t20261234\t홍길동\nB\t20261301\t김철수\nB\t20261302\t이영희');
   await act(prof, 'r-add');
-  await prof.waitForFunction(() => document.querySelectorAll('#rosterBox tr').length === 4);
+  await prof.waitForFunction(() => document.querySelectorAll('#rosterBox tr').length === 5);
   await shot(prof, 'p1-roster');
   await act(prof, 'modal-close');
 
@@ -256,7 +265,7 @@ try {
   await prof.waitForFunction(() => /홍길동/.test(document.getElementById('pmain').textContent));
   const rankRow = await prof.textContent('#pmain table tr:nth-child(2)');
   assert.match(rankRow.replace(/\s+/g, ' '), /1\s*A\s*20261234\s*홍길동\s*15\s*8\s*7/, '순위표: ' + rankRow);   // 4+4+0 + 서술 7
-  assert.equal(await prof.locator('.pill.no', { hasText: '미응시' }).count(), 1);
+  assert.equal(await prof.locator('.pill.no', { hasText: '미응시' }).count(), 2);
   await shot(prof, 'p5-result');
   await act(prof, 'r-tab', '[data-t="q"]'); assert.match(await prof.textContent('#pmain'), /\d+%/);
   await act(prof, 'r-tab', '[data-t="miss"]'); assert.match(await prof.textContent('#pmain'), /셋째 문제/);

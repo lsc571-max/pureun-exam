@@ -4,17 +4,20 @@ import { S, be, parse } from './state.js';
 import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, CIRCLED, errText, hhmmss, download, copyText, shrinkImage } from './ui.js';
 
 const app = $('app');
-let roster = {}, bind = {}, P = null, clockT = 0, liveT = 0, baseSubs = [];
+let roster = {}, bind = {}, users = {}, P = null, clockT = 0, liveT = 0, baseSubs = [];
 const LS = { get: k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 const ST = { draft: ['', '준비 중'], open: ['mid', '대기실 열림'], running: ['ok', '진행 중'], ended: ['no', '종료'] };
 const pill = m => { const s = ST[m.status] || ST.draft; return `<span class="pill ${s[0]}">${s[1]}</span>${m.released ? ' <span class="pill ok">결과 공개</span>' : ''}${m.practice ? ' <span class="pill">문제풀이 공개</span>' : ''}`; };
 const meta = () => S.exams[P.id] || {};
-const students = () => Object.entries(roster).map(([sid, r]) => ({ sid, ...r })).sort((a, b) => a.cls.localeCompare(b.cls) || a.sid.localeCompare(b.sid));
+// 학생 목록 = 명단 + (명단 없이) 직접 입력해 입장한 학생
+const people = () => { const m = {}; for (const u of Object.values(users)) if (u && u.sid) m[u.sid] = { name: u.name, cls: u.cls, self: true }; return { ...m, ...roster }; };
+const students = () => Object.entries(people()).map(([sid, r]) => ({ sid, ...r })).sort((a, b) => String(a.cls).localeCompare(String(b.cls)) || a.sid.localeCompare(b.sid));
 
 export function start() {
   baseSubs.forEach(u => u()); baseSubs = [
     be.on('roster', v => { roster = v || {}; live(); }),
     be.on('bind', v => { bind = v || {}; live(); }),
+    be.on('users', v => { users = v || {}; live(); if (!P && $('listMain')) viewList(); }),
   ];
   P = null; viewList();
 }
@@ -30,14 +33,14 @@ function live() {
 /* ================= 시험 목록 ================= */
 function viewList() {
   const list = Object.entries(S.exams).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
-  app.innerHTML = `<div class="desk"><header><h1>푸른시험 · 교수</h1><button data-a="roster">명단 (${Object.keys(roster).length}명)</button><button data-a="logout">로그아웃</button></header>
-    <main>
+  app.innerHTML = `<div class="desk"><header><h1>푸른시험 · 교수</h1><button data-a="roster">학생 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
+    <main id="listMain">
       <div class="panel"><h2>새 시험 만들기</h2>
         <div class="row"><label class="f" style="flex:1;min-width:180px">시험 이름<input class="in" id="n-title" placeholder="예: 기계공작법 중간고사" maxlength="60"></label>
         <label class="f" style="width:110px">시험 시간(분)<input class="in" id="n-min" type="number" min="1" max="300" value="50"></label>
         <button class="btn s" style="align-self:flex-end" data-a="new-exam">만들기</button></div></div>
       ${list.length ? list.map(([id, m]) => `<button class="card" data-a="p-open" data-id="${esc(id)}"><div style="margin-bottom:6px">${pill(m)}</div><h3>${esc(m.title || '(이름 없음)')}</h3><div class="sm">${m.n || 0}문항 · ${m.total || 0}점 · ${m.minutes || 0}분</div></button>`).join('')
-      : '<div class="panel"><div class="sm">아직 시험이 없어요. 위에서 새 시험을 만들고, 먼저 <b>명단</b>을 올려 주세요.</div></div>'}
+      : '<div class="panel"><div class="sm">아직 시험이 없어요. 위에서 새 시험을 만들어 주세요.</div></div>'}
     </main></div>`;
 }
 on('logout', async () => { if (await confirmBox('로그아웃할까요?', '', '로그아웃')) { closeExam(); await be.signOut(); location.href = './?prof=1'; } });
@@ -52,8 +55,9 @@ on('new-exam', async () => {
 
 /* ================= 명단 ================= */
 on('roster', () => {
-  modal(`<h2>명단</h2>
-    <div class="sm">엑셀에서 <b>반 · 학번 · 이름</b> 칸을 복사해 붙여 넣으세요. 칸 순서는 상관없습니다. 한 줄에 한 명입니다.</div>
+  modal(`<h2>학생</h2>
+    <div class="box info">${Object.keys(roster).length ? '<b>명단 확인 켜짐</b> — 명단의 반·학번·이름과 똑같이 입력한 학생만 입장합니다.' : '<b>명단 없이 입장</b> — 학생이 반·학번·이름을 직접 입력하고 들어옵니다. 아래에 명단을 넣으면 명단에 있는 학생만 입장하게 바뀝니다(선택).'}</div>
+    <div class="sm">명단을 쓰려면 엑셀에서 <b>반 · 학번 · 이름</b> 칸을 복사해 붙여 넣으세요. 칸 순서는 상관없고 한 줄에 한 명입니다.</div>
     <textarea class="in" id="r-text" rows="5" placeholder="A	20261234	홍길동&#10;B	20261301	김철수" style="font-size:15px"></textarea>
     <div class="row"><button class="btn s" data-a="r-add">명단에 추가</button><button class="btn s gh" data-a="r-replace">전체 바꾸기</button></div>
     <div id="r-msg"></div><div id="rosterBox"></div>
@@ -63,10 +67,11 @@ on('roster', () => {
 function paintRoster() {
   const box = $('rosterBox'); if (!box) return;
   const st = students(), cnt = c => st.filter(s => s.cls === c).length;
+  if (!st.length) { box.innerHTML = '<div class="sm">아직 입장한 학생이 없어요.</div>'; return; }
   box.innerHTML = `<div class="sm" style="margin-bottom:6px">전체 ${st.length}명 (A반 ${cnt('A')} · B반 ${cnt('B')}) · 입장한 기기 ${st.filter(s => bind[s.sid]).length}대</div>
     <div class="tw" style="max-height:40dvh;overflow:auto"><table><tr><th>반</th><th>학번</th><th>이름</th><th>기기</th><th></th></tr>
     ${st.map(s => `<tr><td>${esc(s.cls)}</td><td>${esc(s.sid)}</td><td>${esc(s.name)}</td><td>${bind[s.sid] ? '<span class="pill ok">입장함</span>' : '<span class="pill">미입장</span>'}</td>
-      <td style="white-space:nowrap">${bind[s.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(s.sid)}">기기 풀기</button> ` : ''}<button class="mini red" data-a="r-del" data-sid="${esc(s.sid)}">삭제</button></td></tr>`).join('')}
+      <td style="white-space:nowrap">${bind[s.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(s.sid)}">기기 풀기</button> ` : ''}${roster[s.sid] ? `<button class="mini red" data-a="r-del" data-sid="${esc(s.sid)}">명단에서 삭제</button>` : ''}</td></tr>`).join('')}
     </table></div>`;
 }
 async function rosterApply(replace) {
@@ -85,7 +90,7 @@ on('r-replace', () => rosterApply(true));
 on('r-del', async el => { await be.update('', { ['roster/' + el.dataset.sid]: null }); });
 // 휴대폰을 바꾸거나 앱을 다시 설치한 학생: 묶음을 풀면 새 기기에서 다시 입장할 수 있습니다. 답안은 그대로 남습니다.
 on('unbind', async el => {
-  const sid = el.dataset.sid, uid = bind[sid], r = roster[sid] || {};
+  const sid = el.dataset.sid, uid = bind[sid], r = people()[sid] || {};
   if (!(await confirmBox('기기 묶음을 풀까요?', `${esc(r.name || sid)} 학생이 다른 기기에서 다시 입장할 수 있게 됩니다. 저장된 답안은 그대로 남습니다.`, '풀기'))) return;
   const u = { ['bind/' + sid]: null }; if (uid) u['users/' + uid] = null;
   await be.update('', u); toast('풀었어요. 학생이 다시 입장하면 됩니다.');
@@ -143,7 +148,6 @@ function tabRun() {
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="pill" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
       <div class="sm">${esc(guide)}</div>
       ${v.errors.length ? `<div class="box no">문항에 고칠 곳이 ${v.errors.length}군데 있어요. <b>문항</b> 탭에서 확인해 주세요.</div>` : ''}
-      ${!st.length ? '<div class="box warn">명단이 비어 있어요. 목록 화면의 <b>명단</b>에서 올려 주세요. 명단이 없으면 학생이 입장할 수 없습니다.</div>' : ''}
       <div class="row">${btns}<button class="btn s gh" data-a="ex-settings">시험 설정</button></div></div>
     <div class="kpis"><div class="kpi"><b>${k.inb} / ${k.all}</b><span>입장</span></div><div class="kpi"><b>${k.go}</b><span>응시 중</span></div><div class="kpi"><b>${k.sub}</b><span>제출</span></div><div class="kpi"><b>${k.lv}</b><span>이탈한 학생</span></div></div>
     <div class="panel"><div class="row"><h2 style="margin-right:auto">응시 현황</h2>${clsFilter()}</div>
@@ -153,7 +157,7 @@ function tabRun() {
         <td class="num">${r.a ? `${r.cnt} / ${sheet.length}` : ''}</td>
         <td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td>
         <td style="white-space:nowrap">${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">기기 풀기</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button>` : ''}</td></tr>`).join('')}
-      </table></div>${rows.length ? '' : '<div class="sm">명단에 학생이 없어요.</div>'}</div>`;
+      </table></div>${rows.length ? '' : '<div class="sm">아직 입장한 학생이 없어요. 학생이 반·학번·이름을 입력하고 들어오면 여기에 나타납니다.</div>'}</div>`;
 }
 const setMeta = patch => be.update('exams/' + P.id, patch);
 on('ex-status', async el => {
@@ -189,7 +193,7 @@ on('ex-release', async () => {
 });
 on('unsubmit', async el => { if (await confirmBox('제출을 취소할까요?', '학생이 남은 시간 동안 다시 풀 수 있게 됩니다.', '취소하기')) await be.remove(`answers/${P.id}/${el.dataset.sid}/submittedAt`); });
 on('lv-show', el => {
-  const sid = el.dataset.sid, r = roster[sid] || {}, lv = C.leaveSummary((P.answers[sid] || {}).ev);
+  const sid = el.dataset.sid, r = people()[sid] || {}, lv = C.leaveSummary((P.answers[sid] || {}).ev);
   const name = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림' };
   modal(`<h2>${esc(r.cls || '')}반 ${esc(sid)} ${esc(r.name || '')} — 이탈 ${lv.count}회</h2>
     <div class="tw"><table><tr><th>시각</th><th>내용</th></tr>${lv.list.map(e => `<tr><td>${hhmmss(e.at)}</td><td>${esc(name[e.t] || e.t)}</td></tr>`).join('')}</table></div>
@@ -413,7 +417,7 @@ function tabGrade() {
       ${q.model ? `<div class="box ok"><b>모범 답안</b>\n${esc(q.model)}</div>` : ''}${q.why ? `<div class="box info"><b>채점 기준</b>\n${esc(q.why)}</div>` : ''}
       <div class="row"><span class="sm" style="margin-right:auto" id="g-prog">배점 ${q.pts}점 · 채점 ${done} / ${list.length}명</span><button class="mini" data-a="g-blind">${P.blind ? '이름 보이기' : '이름 가리기'}</button><button class="mini" data-a="g-refresh">새 답안 불러오기</button></div></div>
     ${list.map((s, i) => {
-      const r = roster[s.sid] || {}, g = (P.essay[s.sid] || {})[q.id];
+      const r = people()[s.sid] || {}, g = (P.essay[s.sid] || {})[q.id];
       return `<div class="panel" data-sid="${esc(s.sid)}"><div class="sm">${P.blind ? `답안 ${i + 1}` : `${esc(r.cls || '')}반 ${esc(s.sid)} ${esc(r.name || '')}`}</div><div class="txt">${esc(s.text)}</div>
         ${step ? `<div class="scores">${step.map(v => `<button data-a="g-set" data-sid="${esc(s.sid)}" data-v="${v}" class="${g === v ? 'on' : ''}">${v}</button>`).join('')}</div>`
         : `<div class="row"><input class="in g-num" type="number" min="0" max="${q.pts}" step="0.5" value="${typeof g === 'number' ? g : ''}" data-sid="${esc(s.sid)}" style="width:120px;font-size:16px;padding:8px"><span class="sm">/ ${q.pts}점 — 입력하고 칸 밖을 누르면 저장</span></div>`}</div>`;
@@ -433,9 +437,9 @@ on('g-refresh', () => tabGrade());
 
 /* ================= 결과 ================= */
 function resultRows() {
-  const { sheet, key } = exam(), sids = new Set([...Object.keys(roster), ...Object.keys(P.answers)]);
+  const ppl = people(), { sheet, key } = exam(), sids = new Set([...Object.keys(ppl), ...Object.keys(P.answers)]);
   const rows = [...sids].map(sid => {
-    const r = roster[sid] || { name: '(명단에 없음)', cls: '' }, a = P.answers[sid], sc = C.scoreStudent(sheet, key, a && a.a, P.essay[sid]);
+    const r = ppl[sid] || { name: '(이름 없음)', cls: '' }, a = P.answers[sid], sc = C.scoreStudent(sheet, key, a && a.a, P.essay[sid]);
     return { sid, name: r.name, cls: r.cls, took: !!(a && a.startedAt), a, lv: C.leaveSummary(a && a.ev), ...sc };
   });
   return { sheet, key, rows };

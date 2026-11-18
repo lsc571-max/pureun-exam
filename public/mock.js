@@ -29,8 +29,9 @@ export async function createBackend() {
     const prof = at(db, 'admins/' + user.uid) === true;
     if (prof) return;
     if (ks[0] === 'admins') { if (user.anon || at(db, 'admins')) throw deny(); return; }
-    if (ks[0] === 'bind') { const r = at(db, 'roster/' + ks[1]); if (!r || at(db, path) != null) throw deny(); return; }
-    if (ks[0] === 'users') { const r = at(db, 'roster/' + (v && v.sid)); if (!r || r.name !== v.name || r.cls !== v.cls || at(db, path) != null) throw deny(); return; }
+    const open = !at(db, 'roster');   // 명단이 없으면 누구나 입장
+    if (ks[0] === 'bind') { const r = at(db, 'roster/' + ks[1]); if ((!open && !r) || at(db, path) != null) throw deny(); return; }
+    if (ks[0] === 'users') { const r = at(db, 'roster/' + (v && v.sid)); if ((!open && (!r || r.name !== v.name || r.cls !== v.cls)) || at(db, path) != null) throw deny(); return; }
     if (ks[0] === 'answers') {
       const ex = at(db, 'exams/' + ks[1]) || {}, mine = at(db, 'bind/' + ks[2]) === user.uid;
       if (!mine || ex.status !== 'running' || Date.now() >= ex.endAt + 20000 || at(db, `answers/${ks[1]}/${ks[2]}/submittedAt`) != null) throw deny();
