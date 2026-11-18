@@ -3,10 +3,13 @@ export const $ = id => document.getElementById(id);
 export const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥'];
 
-let toastT = 0;
-export function toast(msg, ms = 2600) {
-  const t = $('toast'); t.textContent = msg; t.hidden = false;
-  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, ms);
+let toastT = 0, toastFn = null;
+// action: { label, fn } 을 주면 알림 안에 누를 수 있는 버튼이 생깁니다 (예: 되돌리기)
+export function toast(msg, ms = 2600, action = null) {
+  const t = $('toast'); toastFn = action ? action.fn : null;
+  t.innerHTML = `<span>${esc(msg)}</span>${action ? `<button data-a="toast-act">${esc(action.label)}</button>` : ''}`;
+  t.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; toastFn = null; }, ms);
 }
 
 /* 버튼 연결: <button data-a="이름"> 을 누르면 등록한 함수가 불립니다 */
@@ -42,6 +45,7 @@ export function confirmBox(title, body = '', okLabel = '확인', { danger = fals
     pending = res;
   });
 }
+on('toast-act', () => { const f = toastFn; toastFn = null; $('toast').hidden = true; if (f) return f(); });
 on('dlg-yes', () => { const p = pending; pending = null; closeModal(); if (p) p(true); });
 on('dlg-no', () => closeModal());
 on('modal-close', () => closeModal());

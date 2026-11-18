@@ -115,7 +115,7 @@ function viewHome() {
       ${m.practice ? `<button class="card" data-a="open-practice" data-id="${esc(id)}"><span class="st">문제풀이</span><h3>${esc(m.title || '문제풀이')}</h3><div class="sm">${m.n || 0}문항 · 순서대로 풀고 해설을 바로 확인</div></button>` : ''}`;
   };
   app.innerHTML = `<div class="phone"><div class="bar"><span>푸른시험</span><span class="who">${esc(who())}</span></div>
-    <div class="body" style="background:var(--bg)">${list.length ? list.map(card).join('') : '<div class="box info">지금 열려 있는 시험이 없어요. 교수님이 시험을 열면 여기에 나타납니다.</div>'}</div></div>`;
+    <div class="body tint">${list.length ? list.map(card).join('') : '<div class="box info">지금 열려 있는 시험이 없어요. 교수님이 시험을 열면 여기에 나타납니다.</div>'}</div></div>`;
 }
 on('home', () => { stopExam(); viewHome(); });
 
@@ -175,7 +175,7 @@ async function startExam() {
   const id = N.id, m = S.exams[id];
   try {
     const [sheetRec, imgs, my] = await within(Promise.all([be.get('sheets/' + id), be.get('images/' + id), be.get(`answers/${id}/${S.me.sid}`)]), 15000);
-    const sheet = parse(sheetRec, []);
+    const sheet = C.fixSheet(parse(sheetRec, []));
     if (!sheet.length) return toast('문제를 불러오지 못했어요.');
     const mine = my || {};
     if (mine.submittedAt) { N.my = mine; return viewDone(); }
@@ -239,28 +239,33 @@ function media(q, imgs) {
   return h;
 }
 on('zoom', el => zoom(el.querySelector('img').src));
-const typeChip = q => `${C.TYPE_NAME[q.t] || '문제'} · ${q.pts}점`;
+const typeChip = q => `${q.t === 'image' || q.t === 'video' ? C.TYPE_NAME[q.t] + ' · ' : ''}${C.KIND_NAME[q.k] || '문제'} · ${q.pts}점`;
 
 function renderExam() {
   if (!X) return;
   flushTyping();
   const o = X.order[X.idx], q = X.byId[o.id], a = X.store.get(q.id), n = X.order.length;
   sessionStorage.setItem('idx:' + X.id, X.idx);
-  const body = q.opts
-    ? o.opt.map((orig, slot) => `<button class="opt ${a === orig ? 'on' : ''}" data-a="pick" data-v="${orig}" aria-pressed="${a === orig}"><span class="n">${slot + 1}</span><span>${esc(q.opts[orig])}</span></button>`).join('')
-    : `<textarea class="in ta" id="essay" placeholder="여기에 답을 쓰세요" maxlength="4000" autocomplete="off" autocorrect="off" spellcheck="false">${esc(a || '')}</textarea><div class="sm" id="count">${(a || '').length}자</div>`;
+  let body;
+  if (q.k === 'choice') body = o.opt.map((orig, slot) => `<button class="opt ${a === orig ? 'on' : ''}" data-a="pick" data-v="${orig}" aria-pressed="${a === orig}"><span class="n">${slot + 1}</span><span>${esc(q.opts[orig])}</span></button>`).join('');
+  else if (q.k === 'check') { const sel = C.unpackChecks(a); body = '<div class="sm">맞는 것을 모두 고르세요.</div>' + o.opt.map((orig, slot) => `<button class="opt sq ${sel.includes(orig) ? 'on' : ''}" data-a="tick" data-v="${orig}" aria-pressed="${sel.includes(orig)}"><span class="n">${sel.includes(orig) ? '✓' : slot + 1}</span><span>${esc(q.opts[orig])}</span></button>`).join(''); }
+  else if (q.k === 'dropdown') body = `<select class="in" id="dd" aria-label="답 고르기"><option value="">눌러서 고르세요</option>${o.opt.map(orig => `<option value="${orig}" ${a === orig ? 'selected' : ''}>${esc(q.opts[orig])}</option>`).join('')}</select>`;
+  else if (q.k === 'short') body = `<input class="in" id="short" placeholder="답을 짧게 쓰세요" maxlength="100" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${esc(a || '')}">`;
+  else body = `<textarea class="in ta" id="essay" placeholder="여기에 답을 쓰세요" maxlength="4000" autocomplete="off" autocorrect="off" spellcheck="false">${esc(a || '')}</textarea><div class="sm" id="count">${(a || '').length}자</div>`;
   app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span><span class="clock" id="clock">--:--</span></div>
     <div class="prog"><i style="width:${(X.idx + 1) / n * 100}%"></i></div>
     <div class="body"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, X.imgs)}${body}<div class="save" id="save" style="margin-top:auto"></div></div>
     <div class="foot"><button class="btn gh" data-a="prev" ${X.idx ? '' : 'disabled'}>이전</button><button class="btn gh" data-a="qlist">문항 목록</button>${X.idx < n - 1 ? '<button class="btn" data-a="next">다음</button>' : '<button class="btn am" data-a="qlist">제출</button>'}</div></div>`;
   paintSave(); tick();
-  const ta = $('essay');
+  const ta = $('essay') || $('short');
   if (ta) ta.addEventListener('input', () => {
-    $('count').textContent = ta.value.length + '자';
+    if ($('count')) $('count').textContent = ta.value.length + '자';
     clearTimeout(X.typing); X.pendingText = { id: q.id, v: ta.value };
     const sv = $('save'); if (sv && !sv.classList.contains('off')) sv.textContent = '저장 중…';
     X.typing = setTimeout(flushTyping, 800);
   });
+  const dd = $('dd');
+  if (dd) dd.addEventListener('change', () => X.store.set(q.id, dd.value === '' ? '' : +dd.value));
 }
 function flushTyping() {
   if (!X || !X.pendingText) return;
@@ -271,6 +276,13 @@ on('pick', el => {
   const o = X.order[X.idx], v = +el.dataset.v;
   X.store.set(o.id, v);
   document.querySelectorAll('.opt').forEach(b => { const onb = +b.dataset.v === v; b.classList.toggle('on', onb); b.setAttribute('aria-pressed', onb); });
+});
+on('tick', el => {
+  const o = X.order[X.idx], v = +el.dataset.v, cur = C.unpackChecks(X.store.get(o.id));
+  const next = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v];
+  X.store.set(o.id, C.packChecks(next));
+  const onb = next.includes(v); el.classList.toggle('on', onb); el.setAttribute('aria-pressed', onb);
+  el.querySelector('.n').textContent = onb ? '✓' : String([...el.parentNode.querySelectorAll('.opt')].indexOf(el) + 1);
 });
 on('prev', () => { if (X.idx > 0) { X.idx--; renderExam(); } });
 on('next', () => { if (X.idx < X.order.length - 1) { X.idx++; renderExam(); } });
@@ -308,13 +320,13 @@ function wentAway(t) { if (!X || X.done || X.away) return; X.away = true; X.leav
 function cameBack() {
   if (!X || X.done || !X.away) return;
   X.away = false; logEv('back');
-  showGuard(`<div class="h1" style="color:#fff">시험 화면을 벗어났습니다</div><div class="txt" style="color:#fff">벗어난 횟수와 시각이 기록되었습니다.\n지금까지 <b>${X.leaves}회</b></div><button class="btn am" style="flex:none" data-a="guard-ok">시험으로 돌아가기</button>`);
+  showGuard(`<div class="h1">시험 화면을 벗어났습니다</div><div class="txt">벗어난 횟수와 시각이 기록되었습니다.\n지금까지 <b>${X.leaves}회</b></div><button class="btn am" style="flex:none" data-a="guard-ok">시험으로 돌아가기</button>`);
 }
 function showGuard(html) { const g = $('guard'); g.innerHTML = `<div style="max-width:420px;display:flex;flex-direction:column;gap:16px;text-align:center">${html}</div>`; g.hidden = false; }
 on('guard-ok', () => { $('guard').hidden = true; });
 function otherWindow() {
   X.done = true; clearInterval(X.tick);
-  showGuard('<div class="h1" style="color:#fff">다른 창에서 시험이 열렸습니다</div><div class="txt" style="color:#fff">시험은 한 창에서만 볼 수 있습니다. 이 창은 닫아 주세요.</div>');
+  showGuard('<div class="h1">다른 창에서 시험이 열렸습니다</div><div class="txt">시험은 한 창에서만 볼 수 있습니다. 이 창은 닫아 주세요.</div>');
 }
 document.addEventListener('visibilitychange', () => (document.hidden ? wentAway('leave') : cameBack()));
 window.addEventListener('pagehide', () => wentAway('leave'));
@@ -342,7 +354,7 @@ function viewDone() {
     <div class="txt">${my.submittedAt ? '답안이 제출되었습니다.' : N.unsent ? '시험 시간이 끝났습니다.\n인터넷 연결이 끊겨 일부 답이 아직 전송되지 않았습니다. 이 화면을 닫지 말고 교수님께 알려 주세요.' : '시험이 끝났습니다. 저장된 답안으로 채점됩니다.'}</div>
     <div class="sm">${my.submittedAt ? `제출 시각 ${hhmmss(my.submittedAt)} · ` : ''}답한 문항 ${cnt} / ${m.n || 0}</div>
     ${m.released ? `<button class="btn am" style="flex:none;width:100%" data-a="open-result" data-id="${esc(N.id)}">내 점수와 해설 보기</button>` : '<div class="sm">점수와 해설은 교수님이 공개하면 볼 수 있어요.</div>'}
-    <button class="btn" style="flex:none;width:100%;background:rgba(255,255,255,.14)" data-a="home">처음으로</button></div>`, true);
+    <button class="btn gh" style="flex:none;width:100%" data-a="home">처음으로</button></div>`, true);
 }
 on('open-result', el => openReview(el.dataset.id, 'result'));
 on('open-practice', el => openReview(el.dataset.id, 'practice'));
@@ -356,7 +368,7 @@ async function openReview(id, mode) {
       be.get('sheets/' + id), be.get('keys/' + id), be.get('images/' + id),
       mode === 'result' ? be.get(`answers/${id}/${sid}`) : null, mode === 'result' ? be.get(`essay/${id}/${sid}`) : null,
     ]);
-    const sheet = parse(sheetRec, []), key = parse(keyRec, {});
+    const sheet = C.fixSheet(parse(sheetRec, [])), key = parse(keyRec, {});
     if (!sheet.length) return toast('문제를 불러오지 못했어요.');
     let answers = (my && my.a) || {};
     if (mode === 'practice') { try { answers = JSON.parse(LS.get(`prac:${id}:${sid}`) || '{}'); } catch (e) { answers = {}; } }
@@ -372,7 +384,7 @@ function renderReview() {
     app.innerHTML = `<div class="phone"><div class="bar"><span>내 결과</span><span class="who">${esc(who())}</span></div>
       <div class="body"><div class="chip">${esc(m.title || '')}</div>
         <div class="big">${sc.total}<small> / ${sc.max}점</small></div>
-        <div class="txt">사지선다 ${sc.mc}점 · 서술형 ${sc.essay}점${sc.essayPending ? ` (채점 전 ${sc.essayPending}문항)` : ''}\n틀리거나 감점된 문항 ${sc.wrong.length}개</div>
+        <div class="txt">자동 채점 ${sc.mc}점 · 장문형 ${sc.essay}점${sc.essayPending ? ` (채점 전 ${sc.essayPending}문항)` : ''}\n틀리거나 감점된 문항 ${sc.wrong.length}개</div>
         <div class="grid">${R.sheet.map((q, i) => `<button data-a="rv-goto" data-id="${q.id}" class="${sc.per[q.id].ok === true ? 'right' : sc.per[q.id].ok === false ? 'wrong' : ''}" aria-label="${i + 1}번">${i + 1}</button>`).join('')}</div>
         <div class="sm">초록은 맞은 문항, 빨강은 틀린 문항입니다. 번호를 누르면 해설을 봅니다.</div></div>
       <div class="foot"><button class="btn gh" style="flex:0 0 28%" data-a="home">나가기</button><button class="btn gh" data-a="rv-wrong" ${sc.wrong.length ? '' : 'disabled'}>틀린 문항만</button><button class="btn" data-a="rv-all">전체 보기</button></div></div>`;
@@ -381,25 +393,31 @@ function renderReview() {
   R.idx = Math.max(0, Math.min(R.idx, list.length - 1));
   const q = list[R.idx], k = R.key[q.id] || {}, a = R.answers[q.id], no = R.sheet.indexOf(q) + 1;
   const has = a !== undefined && a !== null && a !== '';
-  const reveal = !prac || R.shown[q.id] || (q.opts && has);
+  const p = R.score.per[q.id];
+  // 문제풀이: 객관식·드롭다운은 고르면 바로, 나머지는 "정답 확인"을 눌러야 정답이 보입니다.
+  const reveal = !prac || R.shown[q.id] || ((q.k === 'choice' || q.k === 'dropdown') && has);
+  const live = prac && !reveal;
   let body;
-  if (q.opts) {
-    body = q.opts.map((t, i) => {
-      const mine = has && Number(a) === i, right = reveal && i === k.a;
-      return `<button class="opt ${right ? 'right' : mine && reveal ? 'wrong' : mine ? 'on' : ''}" ${prac && !has ? `data-a="pr-pick" data-v="${i}"` : 'disabled'}><span class="n">${i + 1}</span><span>${esc(t)}</span>${right ? '<span class="tag">정답</span>' : mine ? '<span class="tag">내 답</span>' : ''}</button>`;
-    }).join('') + (reveal && !has ? '<div class="box warn">답을 고르지 않았습니다.</div>' : '');
+  if (C.hasOpts(q.k)) {
+    const mineSet = q.k === 'check' ? C.unpackChecks(a) : (has ? [Number(a)] : []), good = q.k === 'check' ? (k.a || []) : [k.a];
+    body = (q.k === 'check' ? '<div class="sm">맞는 것을 모두 고르는 문제입니다.</div>' : '') + q.opts.map((t, i) => {
+      const mine = mineSet.includes(i), right = reveal && good.includes(i);
+      return `<button class="opt ${q.k === 'check' ? 'sq' : ''} ${right ? 'right' : mine && reveal ? 'wrong' : mine ? 'on' : ''}" ${live ? `data-a="${q.k === 'check' ? 'pr-tick' : 'pr-pick'}" data-v="${i}"` : 'disabled'}><span class="n">${i + 1}</span><span>${esc(t)}</span>${right ? `<span class="tag">정답${mine ? ' · 내 답' : ''}</span>` : mine ? '<span class="tag">내 답</span>' : ''}</button>`;
+    }).join('') + (reveal && !mineSet.length ? '<div class="box warn">답을 고르지 않았습니다.</div>' : '') + (live && q.k === 'check' ? '<button class="btn gh" style="flex:none" data-a="pr-show">정답 확인</button>' : '');
+  } else if (q.k === 'short') {
+    body = live ? `<input class="in" id="pr-text" placeholder="답을 짧게 쓰세요" maxlength="100" autocomplete="off" value="${esc(a || '')}"><button class="btn gh" style="flex:none" data-a="pr-show">정답 확인</button>`
+      : `<div class="box ${p.ok ? 'ok' : 'no'}"><b>내 답 — ${p.ok ? '정답' : '오답'}</b>\n${esc(has ? a : '(답을 쓰지 않았습니다)')}</div><div class="box ok"><b>정답</b>\n${esc((k.answers || []).join(' / '))}</div>`;
   } else if (prac) {
-    body = `<textarea class="in ta" id="pr-essay" placeholder="답을 써 본 뒤 모범 답안을 확인하세요" maxlength="4000">${esc(a || '')}</textarea>${reveal ? '' : '<button class="btn gh" style="flex:none" data-a="pr-show">모범 답안 보기</button>'}`;
+    body = `<textarea class="in ta" id="pr-text" placeholder="답을 써 본 뒤 모범 답안을 확인하세요" maxlength="4000">${esc(a || '')}</textarea>${reveal ? '' : '<button class="btn gh" style="flex:none" data-a="pr-show">모범 답안 보기</button>'}`;
   } else {
-    const p = R.score.per[q.id];
     body = `<div class="box info"><b>내 답</b>\n${esc(has ? a : '(답을 쓰지 않았습니다)')}</div><div class="box ${p.graded ? 'ok' : 'warn'}"><b>${p.graded ? `받은 점수 ${p.pts} / ${q.pts}점` : '아직 채점 전입니다'}</b></div>`;
   }
-  const expl = reveal ? `${!q.opts && k.model ? `<div class="box ok"><b>모범 답안</b>\n${esc(k.model)}</div>` : ''}${k.why ? `<div class="box ok"><b>${q.opts ? '해설' : '채점 기준'}</b>\n${esc(k.why)}</div>` : ''}` : '';
+  const expl = reveal ? `${q.k === 'long' && k.model ? `<div class="box ok"><b>모범 답안</b>\n${esc(k.model)}</div>` : ''}${k.why ? `<div class="box ok"><b>${q.k === 'long' ? '채점 기준' : '해설'}</b>\n${esc(k.why)}</div>` : ''}` : '';
   app.innerHTML = `<div class="phone"><div class="bar"><span>${prac ? '문제풀이' : R.onlyWrong ? '틀린 문항' : '해설'} ${R.idx + 1} / ${list.length}</span><button data-a="${prac ? 'home' : 'rv-top'}">${prac ? '나가기' : '점수 화면'}</button></div>
     <div class="prog"><i style="width:${(R.idx + 1) / list.length * 100}%"></i></div>
     <div class="body"><div class="chip">${no}번 · ${esc(typeChip(q))}${reveal && k.level ? ` · 난이도 ${esc(k.level)}` : ''}</div><div class="q">${esc(q.q)}</div>${media(q, R.imgs)}${body}${expl}</div>
     <div class="foot"><button class="btn gh" data-a="rv-prev" ${R.idx ? '' : 'disabled'}>이전</button>${prac ? '<button class="btn gh" data-a="pr-reset">처음부터 다시</button>' : ''}<button class="btn" data-a="rv-next" ${R.idx < list.length - 1 ? '' : 'disabled'}>다음</button></div></div>`;
-  const ta = $('pr-essay');
+  const ta = $('pr-text');
   if (ta) ta.addEventListener('input', () => { R.answers[q.id] = ta.value; savePractice(); });
 }
 const savePractice = () => LS.set(`prac:${R.id}:${S.me.sid}`, JSON.stringify(R.answers));
@@ -410,7 +428,8 @@ on('rv-top', () => { R.idx = -1; renderReview(); });
 on('rv-prev', () => { R.idx--; renderReview(); });
 on('rv-next', () => { R.idx++; renderReview(); });
 on('pr-pick', el => { const q = reviewList()[R.idx]; R.answers[q.id] = +el.dataset.v; savePractice(); renderReview(); });
-on('pr-show', () => { R.shown[reviewList()[R.idx].id] = true; renderReview(); });
+on('pr-tick', el => { const q = reviewList()[R.idx], v = +el.dataset.v, cur = C.unpackChecks(R.answers[q.id]); R.answers[q.id] = C.packChecks(cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]); savePractice(); renderReview(); });
+on('pr-show', () => { R.shown[reviewList()[R.idx].id] = true; R.score = C.scoreStudent(R.sheet, R.key, R.answers, R.essay); renderReview(); });
 on('pr-reset', async () => { if (await confirmBox('처음부터 다시 풀까요?', '지금까지 고른 답이 지워집니다.', '다시 풀기')) { R.answers = {}; R.shown = {}; R.idx = 0; savePractice(); renderReview(); } });
 
 boot();
