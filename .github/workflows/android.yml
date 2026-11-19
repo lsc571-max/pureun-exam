@@ -49,6 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete app --yes --cleanup-tag 2>/dev/null || true
-          gh release create app pureun-exam.apk --latest \
+          echo "${{ github.run_number }}" > version.txt   # 앱이 새 버전이 있는지 확인하는 번호(= versionCode)
+          gh release create app pureun-exam.apk version.txt --latest \
             --title "푸른시험 안드로이드 앱 (빌드 ${{ github.run_number }})" \
             --notes "안드로이드 휴대폰에서 pureun-exam.apk 를 눌러 내려받아 설치하세요. 새 빌드가 나오면 이 파일이 바뀝니다."

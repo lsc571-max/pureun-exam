@@ -3,6 +3,14 @@ package kr.pureun.exam;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.pm.PackageInstaller;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -94,6 +102,87 @@ public class MainActivity extends Activity {
             }
         });
         if (saved != null) web.restoreState(saved); else web.loadUrl(HOME);
+        checkUpdate();
+    }
+
+    /* ---------- 앱 업데이트: 열 때 새 버전이 있는지 보고, 웹이 "설치"를 누르면 내려받아 설치 화면을 띄웁니다 ---------- */
+    private static final String UPDATE_BASE = "https://github.com/lsc571-max/pureun-exam/releases/download/app/";
+    private volatile int latestCode = 0;
+    private volatile boolean updating = false;
+
+    @SuppressWarnings("deprecation")
+    private int myCode() {
+        try {
+            android.content.pm.PackageInfo i = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return Build.VERSION.SDK_INT >= 28 ? (int) i.getLongVersionCode() : i.versionCode;
+        } catch (Exception e) { return 0; }
+    }
+
+    private HttpURLConnection open(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setInstanceFollowRedirects(true);
+        c.setConnectTimeout(10000);
+        c.setReadTimeout(30000);
+        return c;
+    }
+
+    private void checkUpdate() {
+        new Thread(() -> {
+            try {
+                HttpURLConnection c = open(UPDATE_BASE + "version.txt");
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream()))) {
+                    latestCode = Integer.parseInt(r.readLine().trim());
+                }
+                if (latestCode > myCode()) ui.post(() -> tell("update-ready"));
+            } catch (Exception ignored) { }
+        }).start();
+    }
+
+    private void installUpdate() {
+        if (updating || examOn) return;
+        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            // 처음 한 번: "이 앱이 다른 앱을 설치하도록 허용"을 켜는 화면으로 보냅니다
+            tell("update-perm");
+            try { startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName()))); } catch (Exception ignored) { }
+            return;
+        }
+        updating = true;
+        tell("update-downloading");
+        new Thread(() -> {
+            try {
+                PackageInstaller pi = getPackageManager().getPackageInstaller();
+                PackageInstaller.SessionParams sp = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                int id = pi.createSession(sp);
+                try (PackageInstaller.Session ses = pi.openSession(id)) {
+                    HttpURLConnection c = open(UPDATE_BASE + "pureun-exam.apk");
+                    try (InputStream in = c.getInputStream(); OutputStream out = ses.openWrite("pureun-exam.apk", 0, -1)) {
+                        byte[] buf = new byte[65536]; int n;
+                        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                        ses.fsync(out);
+                    }
+                    Intent done = new Intent(this, MainActivity.class).setAction("kr.pureun.exam.UPDATE");
+                    int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+                    ses.commit(PendingIntent.getActivity(this, 7, done, flags).getIntentSender());
+                }
+            } catch (Exception e) {
+                updating = false;
+                ui.post(() -> tell("update-fail"));
+            }
+        }).start();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (intent == null || !"kr.pureun.exam.UPDATE".equals(intent.getAction())) return;
+        int st = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+        if (st == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);   // 안드로이드의 "설치할까요?" 화면
+            if (confirm != null) try { startActivity(confirm); } catch (Exception ignored) { }
+        } else if (st != PackageInstaller.STATUS_SUCCESS) {
+            updating = false;
+            tell("update-fail");
+        }
     }
 
     private PermissionRequest pendingCamera;
@@ -216,7 +305,19 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public int version() {
-            return 2;
+            return 3;
+        }
+
+        /** 새 앱 버전이 있는지 (앱을 열 때 확인한 결과) */
+        @JavascriptInterface
+        public boolean updateAvailable() {
+            return latestCode > myCode();
+        }
+
+        /** 새 앱을 내려받아 설치 화면을 띄웁니다 (시험 중에는 하지 않음) */
+        @JavascriptInterface
+        public void installUpdate() {
+            ui.post(MainActivity.this::installUpdate);
         }
     }
 

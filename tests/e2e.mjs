@@ -307,6 +307,7 @@ try {
   await act(stu, 'cls', '[data-c="A반"]'); await stu.fill('#e-sid', ' 2026 1234 '); await stu.fill('#e-name', '홍 길동'); await act(stu, 'enter');
   await stu.waitForSelector('[data-a="open-exam"]');
   assert.match(await stu.textContent('.who'), /A반 20261234 홍길동/);
+  assert.equal(await stu.locator('.bar [data-a="upd"]').count(), 1, '학생 화면에 업데이트 버튼이 없음');
 
   say('입장 코드: 켜면 코드를 아는 학생만 들어온다');
   await act(prof, 'p-back'); await act(prof, 'people');
@@ -645,10 +646,18 @@ try {
   await late.addInitScript(() => {
     const st = window.__app = { dnd: false, auto: false, calls: [], hot: 0, face: { face: true, yaw: 0 } };
     window.__fakeFace = () => st.face;   // 카메라와 얼굴 감지기를 대신함
-    window.PureunApp = { thermalStatus: () => st.hot, isDndOn: () => st.dnd, canAutoDnd: () => st.auto, requestDndAccess: () => st.calls.push('requestDndAccess'), startLock: () => st.calls.push('startLock'), stopLock: () => st.calls.push('stopLock') };
+    window.PureunApp = { thermalStatus: () => st.hot, isDndOn: () => st.dnd, canAutoDnd: () => st.auto, requestDndAccess: () => st.calls.push('requestDndAccess'), startLock: () => st.calls.push('startLock'), stopLock: () => st.calls.push('stopLock'), updateAvailable: () => !!st.upd, installUpdate: () => st.calls.push('installUpdate') };
   });
   await enter(late, 'B반', '20261302', '이영희');
-  await late.waitForSelector('[data-a="open-exam"]'); await act(late, 'open-exam');
+  await late.waitForSelector('[data-a="open-exam"]');
+  say('앱: 새 앱 버전이 있으면 목록 위에 "새 버전 설치"가 뜨고, 누르면 앱에 설치를 부탁한다');
+  await late.evaluate(() => { window.__app.upd = true; window.onPureunEvent('update-ready'); });
+  await late.waitForSelector('.btn[data-a="upd"]');
+  await late.click('.btn[data-a="upd"]');
+  assert.deepEqual(await late.evaluate(() => window.__app.calls), ['installUpdate']);
+  assert.equal((await db(prof)).answers[exId]['20261302'], undefined, '업데이트 알림이 이탈로 기록됨');
+  await late.evaluate(() => { window.__app.upd = false; window.__app.calls = []; });
+  await act(late, 'open-exam');
   await late.waitForSelector('[data-a="agree"]'); await act(late, 'agree');
   say('앱: 방해 금지를 켤 수 없으면 시작 버튼이 눌리지 않는다');
   assert.ok(await late.isDisabled('[data-a="start"]'), '방해 금지가 꺼져 있는데 시작이 됨');

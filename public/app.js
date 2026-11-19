@@ -106,6 +106,17 @@ on('test-open', () => {
   const a = document.createElement('a'); a.href = urlFor('test=' + n); a.target = '_blank'; a.rel = 'noopener';
   document.body.appendChild(a); a.click(); a.remove();
 });
+/* ----- 업데이트: "업데이트"를 누르면 최신 화면으로 새로 고칩니다. 앱에 새 버전이 있으면 내려받아 설치 화면을 띄웁니다. ----- */
+const UPD_BTN = '<button class="updbtn" data-a="upd" title="최신 버전으로">업데이트</button>';
+const appNew = () => { try { return !!(APP && APP.updateAvailable && APP.updateAvailable()); } catch (e) { return false; } };
+const appOld = () => !!APP && !(APP.updateAvailable);   // 업데이트 기능이 없는 예전 앱
+const appUpdBox = () => appNew() ? '<div class="box info"><b>새 앱 버전이 있습니다.</b> 아래 버튼을 누르고 안드로이드의 <b>설치</b>를 눌러 주세요. 시험 전에 해 두세요.</div><button class="btn am" style="flex:none" data-a="upd">새 버전 설치</button>' : '';
+on('upd', () => {
+  if (APP && X && !X.done) return;   // 시험 중에는 하지 않음
+  if (appNew()) { try { APP.installUpdate(); } catch (e) {} return; }
+  if (appOld()) return toast('이 앱은 새 앱을 크롬에서 한 번 내려받아 다시 설치해야 합니다. 교수님께 받은 주소를 크롬에서 여세요.', 7000);
+  toast('최신 버전으로 새로 고칩니다…'); setTimeout(() => location.reload(), 300);
+});
 const shell = (inner, center) => `<div class="phone dark"><div class="body${center ? ' center' : ''}">${inner}</div></div>`;
 
 function viewProfLogin(msg = '') {
@@ -131,7 +142,7 @@ function viewEntry(err = '') {
       : '<div class="h1">다른 창에서 열어 주세요</div><div class="txt">카카오톡·네이버 같은 앱 안의 창에서는 시험을 볼 수 없습니다.\n오른쪽 위 메뉴(⋮ 또는 공유)에서 <b>다른 브라우저로 열기</b>를 눌러 크롬이나 사파리로 열어 주세요.</div>'}`, true);
     return;
   }
-  app.innerHTML = shell(`${testRibbon()}<div class="chip" data-a="brand">푸른시험${TEST ? ` · 테스트 학생 ${TEST}` : ''}</div>
+  app.innerHTML = shell(`${testRibbon()}<div class="brandrow"><div class="chip" data-a="brand">푸른시험${TEST ? ` · 테스트 학생 ${TEST}` : ''}</div>${UPD_BTN}</div>${appUpdBox()}
     <div class="h1">${cs.length > 1 ? '반을 고르고 학번과 이름을 입력하세요' : '학번과 이름을 입력하세요'}</div>
     ${cs.length > 1 ? `<div class="seg">${cs.map(c => `<button data-a="cls" data-c="${esc(c)}" class="${entryCls === c ? 'on' : ''}" aria-pressed="${entryCls === c}">${esc(c)}</button>`).join('')}</div>` : `<div class="sm" style="font-size:17px;font-weight:700">${esc(cs[0])}</div>`}
     <input class="in" id="e-sid" inputmode="numeric" autocomplete="off" placeholder="학번 (예: 20261234)" maxlength="20" value="${TEST ? 'TEST' + TEST : ''}">
@@ -191,8 +202,8 @@ function viewHome() {
     const hint = missed ? '이 시험을 보지 않았어요' : m.status === 'open' ? '눌러서 대기실에 들어가세요' : !over && m.status === 'running' ? '눌러서 응시하세요' : over ? (m.released ? '눌러서 내 점수와 해설을 보세요' : '결과는 교수님이 공개하면 볼 수 있어요') : '';
     return `<button class="card" data-a="open-exam" data-id="${esc(id)}"><span class="st ${st[0]}">${st[1]}</span><h3>${esc(m.title || '시험')}</h3><div class="sm">${m.n || 0}문항 · ${m.minutes || 0}분 · ${hint}</div></button>`;
   };
-  app.innerHTML = `<div class="phone"><div class="bar"><span data-a="brand">푸른시험${TEST ? ' · 테스트' : ''}</span><span class="who">${esc(who())}</span></div>
-    <div class="body tint">${list.length ? list.map(card).join('') : '<div class="box info">지금 열려 있는 시험이 없어요. 교수님이 시험을 열면 여기에 나타납니다.</div>'}</div></div>`;
+  app.innerHTML = `<div class="phone"><div class="bar"><span class="brandrow"><span data-a="brand">푸른시험${TEST ? ' · 테스트' : ''}</span>${UPD_BTN}</span><span class="who">${esc(who())}</span></div>
+    <div class="body tint">${appUpdBox()}${list.length ? list.map(card).join('') : '<div class="box info">지금 열려 있는 시험이 없어요. 교수님이 시험을 열면 여기에 나타납니다.</div>'}</div></div>`;
 }
 on('home', () => { stopExam(); viewHome(); });
 
@@ -640,6 +651,11 @@ if (!APP) {
 }
 // 안드로이드 앱이 알려 주는 일
 window.onPureunEvent = t => {
+  // 앱 업데이트 알림 (화면 이탈이 아님)
+  if (t === 'update-ready') { if (view === 'home') viewHome(); else if (!S.me && $('e-sid')) keepEntry(); return; }
+  if (t === 'update-perm') return toast('처음 한 번만: "이 출처 허용"(알 수 없는 앱 설치)을 켠 뒤 돌아와서 다시 "새 버전 설치"를 눌러 주세요.', 9000);
+  if (t === 'update-downloading') return toast('새 버전을 내려받는 중이에요… 잠시 뒤 설치 화면이 뜹니다.', 8000);
+  if (t === 'update-fail') return toast('업데이트하지 못했어요. 인터넷을 확인하고 다시 눌러 주세요.', 6000);
   if (t === 'back') return cameBack();
   if (t === 'pinned') { if (X && !X.done && X.unpinned) { X.unpinned = false; X.away = true; cameBack(); } return; }
   if (t === 'unpin') {

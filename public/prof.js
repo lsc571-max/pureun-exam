@@ -93,7 +93,7 @@ function live() {
 function viewList() {
   const keep = { t: $('n-title') ? $('n-title').value : '', m: $('n-min') ? $('n-min').value : '50', f: document.activeElement && document.activeElement.id };
   const list = Object.entries(S.exams).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
-  app.innerHTML = `<div class="desk"><header><h1 data-a="brand">푸른시험</h1>${codePill()}${histButtons()}<button data-a="test-open">학생으로 테스트</button><button data-a="people">학생 · 반 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
+  app.innerHTML = `<div class="desk"><header><h1 data-a="brand">푸른시험</h1><button data-a="upd" title="최신 버전으로 새로 고침">업데이트</button>${codePill()}${histButtons()}<button data-a="test-open">학생으로 테스트</button><button data-a="people">학생 · 반 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
     <main id="listMain">
       <div class="panel"><h2>새 시험 만들기</h2>
         <div class="row"><label class="f" style="flex:1;min-width:180px">시험 이름<input class="in" id="n-title" placeholder="예: 기계공작법 중간고사" maxlength="60"></label>

@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <!-- 시험 화면 위에 다른 앱의 떠 있는 창이 보이지 않게 합니다 -->
     <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
+    <!-- 앱 안에서 새 버전을 내려받아 설치할 때 씁니다(설치는 학생이 확인을 눌러야 진행) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
