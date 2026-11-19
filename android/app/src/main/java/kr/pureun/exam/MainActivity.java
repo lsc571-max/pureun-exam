@@ -166,6 +166,7 @@ public class MainActivity extends Activity {
                 examOn = true;
                 lockAskedAt = System.currentTimeMillis();
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                immersive(true);
                 dndOn();
                 try { startLockTask(); } catch (Exception ignored) { }
                 ui.removeCallbacks(watchPin);
@@ -181,6 +182,7 @@ public class MainActivity extends Activity {
                 reportedUnpinned = false;
                 ui.removeCallbacks(watchPin);
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                immersive(false);
                 try { stopLockTask(); } catch (Exception ignored) { }
                 dndRestore();
             });
@@ -275,6 +277,22 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         if (examOn) tell("leave");
+    }
+
+    /** 시험 중에는 위(시계·알림)와 아래(버튼) 줄을 숨겨 전체 화면으로 봅니다. 가장자리를 밀면 잠깐 보였다가 다시 숨습니다. */
+    @SuppressWarnings("deprecation")
+    private void immersive(boolean on) {
+        View d = getWindow().getDecorView();
+        d.setSystemUiVisibility(on
+            ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+              | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            : View.SYSTEM_UI_FLAG_VISIBLE);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && examOn) immersive(true);   // 다른 창이 떴다 사라져도 다시 전체 화면으로
     }
 
     @Override

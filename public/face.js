@@ -23,13 +23,32 @@ function loadDetector() {
 const openCamera = () => navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 5, max: 10 } } });
 
 // 안내 쪽에서: 카메라를 켤 수 있는지 한 번 확인하고 바로 끕니다. 감지기도 미리 받아 둡니다.
-export async function testCamera() {
-  if (fake()) return true;
+// 화면 가득 본인 얼굴을 거울처럼 보여 주고, 3 · 2 · 1 뒤에 저절로 끕니다.
+export async function testCamera(ms = 3000) {
+  if (fake()) { await preview(null, Math.min(ms, 600)); return true; }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('nocamera');
-  const s = await openCamera();
-  s.getTracks().forEach(t => t.stop());
+  let s;
+  try { s = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 1280 } } }); }
+  catch (e) { s = await openCamera(); }
   loadDetector().catch(() => {});
+  try { await preview(s, ms); } finally { s.getTracks().forEach(t => t.stop()); }
   return true;
+}
+function preview(stream, ms) {
+  return new Promise(done => {
+    const box = document.createElement('div');
+    box.className = 'campv';
+    box.innerHTML = '<video muted playsinline autoplay></video><div class="ring"></div><div class="msg">얼굴이 동그라미 안에 잘 보이나요?</div><div class="cnt">3</div>';
+    document.body.appendChild(box);
+    const v = box.querySelector('video'), cnt = box.querySelector('.cnt');
+    if (stream) { v.srcObject = stream; v.play().catch(() => {}); }
+    let n = 3;
+    const t = setInterval(() => {
+      if (--n > 0) { cnt.textContent = n; cnt.classList.remove('pop'); void cnt.offsetWidth; cnt.classList.add('pop'); return; }
+      clearInterval(t); box.classList.add('out');
+      setTimeout(() => { box.remove(); done(); }, 280);
+    }, ms / 3);
+  });
 }
 
 // 감시 시작. onAway(why): 얼굴이 AWAY_MS 동안 안 보이거나('gone') 돌아가 있음('turn'). onBack(): 다시 보임.

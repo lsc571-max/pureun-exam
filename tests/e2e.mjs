@@ -256,8 +256,13 @@ try {
   assert.match(await prof.textContent('pre.code'), /\/\* 1번 \*\/.*"a":2/s);
   await act(prof, 'modal-close');
 
-  say('"안드로이드는 앱으로만 응시" 스위치');
-  await act(prof, 'p-tab', '[data-t="run"]'); await act(prof, 'ex-settings'); await prof.click('#s-app'); await act(prof, 's-save');
+  say('시험 설정 기본값: 카메라 켜짐 · 위아래 20 · 좌우 20 · 2초 · 경고 3회 · 앱으로만 켜짐, 문제풀이 공개 칸은 없음');
+  await act(prof, 'p-tab', '[data-t="run"]'); await act(prof, 'ex-settings');
+  assert.ok(await prof.locator('#s-app.on').count() && await prof.locator('#s-cam.on').count(), '카메라·앱 전용이 기본으로 켜져 있지 않음');
+  assert.deepEqual(await Promise.all(['#s-leavelock', '#s-campitch', '#s-camyaw', '#s-camsec', '#s-camlock'].map(x => prof.inputValue(x))), ['2', '20', '20', '2', '3']);
+  assert.equal(await prof.locator('.pgrid .pcell').first().locator('#s-leavelock').count(), 1, '화면 벗어남 칸이 각도 줄 맨 앞에 있지 않음');
+  assert.equal(await prof.locator('#s-prac').count(), 0, '문제풀이 공개 칸이 남아 있음');
+  await act(prof, 's-save');
   await prof.waitForFunction(() => document.getElementById('modal').hidden);
   d = await db(prof); assert.equal(d.exams[Object.keys(d.exams)[0]].appOnly, true);
   const droid = await browser.newContext({ viewport: { width: 412, height: 860 }, userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-S911N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36' });
@@ -272,7 +277,7 @@ try {
   const kp = await kakao.newPage(); await kp.goto(BASE + '/?mock=1');
   await kp.waitForFunction(() => /다른 창에서 열어 주세요/.test(document.body.textContent));   // 카카오톡 안의 창에서는 입장하지 않게
   await kakao.close();
-  await act(prof, 'ex-settings'); await prof.click('#s-app');   // 나머지 테스트는 웹으로 진행
+  await act(prof, 'ex-settings'); await prof.click('#s-app'); await prof.click('#s-cam');   // 나머지 테스트는 웹으로, 카메라 없이 진행
   assert.equal(await prof.inputValue('#s-leavelock'), '2', '화면 벗어남 잠금 횟수의 기본값이 2가 아님');
   await prof.fill('#s-leavelock', '0'); await act(prof, 's-save');   // 이 학생들은 화면을 벗어나도 잠그지 않음(기록만)
   await prof.waitForFunction(() => document.getElementById('modal').hidden);
@@ -314,7 +319,16 @@ try {
   await prof.waitForFunction(() => !/코드학생/.test(document.getElementById('peopleBox').textContent));
   await act(prof, 'modal-close'); await act(prof, 'p-open');
   await prof.waitForSelector('[data-a="ex-start"]');
-  assert.ok(!/입장 코드/.test(await prof.textContent('#phead')), '코드를 껐는데 시험 화면에 남음');
+  assert.match(await prof.textContent('#phead'), /입장 코드 꺼짐/, '코드를 끄면 회색으로 "입장 코드 꺼짐"이 보여야 함');
+  say('입장 코드 표시를 세 번 누르면 바로 바꾸는 창이 뜬다');
+  for (let i = 0; i < 2; i++) await prof.click('#phead [data-a="code-tap"]');
+  assert.ok(await prof.evaluate(() => document.getElementById('modal').hidden), '두 번만 눌렀는데 창이 뜸');
+  await prof.click('#phead [data-a="code-tap"]');
+  await prof.waitForSelector('#modal #code-in');
+  await prof.fill('#code-in', '303'); await act(prof, 'code-save');
+  await prof.waitForFunction(() => /입장 코드 303/.test(document.getElementById('phead').textContent));
+  await act(prof, 'code-off'); await act(prof, 'modal-close');
+  await prof.waitForFunction(() => /입장 코드 꺼짐/.test(document.getElementById('phead').textContent));
 
   say('두 번째 기기는 같은 학번으로 못 들어온다');
   const stu2 = await ctx.newPage(); watch(stu2, '학생2');
@@ -378,6 +392,25 @@ try {
   assert.equal((await db(prof)).answers[exId]['20261234'].a[idOf('셋째 문제')], '0,3');
   await stu.locator('.opt', { hasText: '라3' }).click(); await saved(stu);
   assert.equal((await db(prof)).answers[exId]['20261234'].a[idOf('셋째 문제')], '0');   // 일부러 틀리게 둠
+
+  say('손으로 옆으로 밀어 넘긴다. 맨 끝에서 밀어도 제출되지 않는다');
+  const swipeX = (pg, dx) => pg.evaluate(dx => {
+    const el = document.querySelector('.qbody .q'), r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + 5;
+    const mk = (type, cx) => { const t = new Touch({ identifier: 1, target: el, clientX: cx, clientY: y }); el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [t], changedTouches: [t] })); };
+    mk('touchstart', x); mk('touchend', x + dx);
+  }, dx);
+  const pos = async pg => (await pg.textContent('.bar span')).trim();
+  await act(stu, 'qlist'); await stu.click('.grid button >> nth=0');
+  await swipeX(stu, -120); assert.equal(await pos(stu), '2 / 5');
+  await swipeX(stu, 120); assert.equal(await pos(stu), '1 / 5');
+  await swipeX(stu, 120); assert.equal(await pos(stu), '1 / 5', '첫 문제에서 더 밀었는데 움직임');
+  await swipeX(stu, -30); assert.equal(await pos(stu), '1 / 5', '조금만 움직였는데 넘어감');
+  await act(stu, 'qlist'); await stu.click('.grid button >> nth=4');
+  await swipeX(stu, -120); await stu.waitForTimeout(300);
+  assert.equal(await pos(stu), '5 / 5');
+  assert.ok(await stu.evaluate(() => document.getElementById('modal').hidden), '마지막에서 밀었더니 창이 뜸');
+  assert.ok(!(await db(prof)).answers[exId]['20261234'].submittedAt, '마지막에서 밀었더니 제출됨');
+  await goTo(stu, '셋째 문제');
 
   say('앱이 꺼졌다 켜져도 이어서 푼다');
   await stu.reload(); await stu.waitForSelector('[data-a="open-exam"]');
@@ -606,6 +639,8 @@ try {
   await late.waitForFunction(() => /자동으로 켜지고/.test(document.body.textContent), null, { timeout: 5000 });
   assert.ok(await late.isDisabled('[data-a="start"]'), '카메라를 확인하지 않았는데 시작이 됨');
   await act(late, 'cam-test');
+  await late.waitForSelector('.campv');                                 // 화면 가득 내 얼굴(테스트에서는 짧게)
+  await late.waitForSelector('.campv', { state: 'detached', timeout: 5000 });
   await late.waitForFunction(() => !document.querySelector('[data-a="start"]').disabled, null, { timeout: 5000 });
   assert.match(await late.textContent('#app'), /자동으로 켜지고/);
   await act(late, 'start');
@@ -661,6 +696,7 @@ try {
   await late.evaluate(() => { window.onPureunEvent('leave'); window.onPureunEvent('back'); });
   await late.waitForFunction(() => /화면이 잠겼습니다.*시험 화면을 2번 벗어났습니다/s.test(document.getElementById('guard').textContent) && !document.getElementById('guard').hidden);
   await shot(late, 's12-lockout');
+  await prof.waitForSelector('#pband .alarm');   // 교수 화면에 잠김이 보인 뒤에 풂
   await prof.click('[data-a="unlock"][data-sid="20261302"]');
   await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 5000 });
   assert.ok(Object.values((await db(prof)).answers[exId]['20261302'].ev).some(e => e.t === 'lockout'));
@@ -703,7 +739,9 @@ try {
   assert.match(shortPage, /넷째 문제/); assert.match(shortPage, /내 답 — 정답/); assert.match(shortPage, /사출금형/);
 
   say('문제풀이 모드: 순서대로, 해설 바로 확인');
-  await act(prof, 'p-tab', '[data-t="run"]'); await act(prof, 'ex-settings'); await act(prof, 's-practice'); await act(prof, 's-save'); await act(prof, 'dlg-yes');
+  // (설정 창에서는 뺐지만, 예전에 켜 둔 시험을 위해 학생 쪽 기능은 남아 있음)
+  await act(prof, 'p-tab', '[data-t="run"]');
+  await prof.evaluate(id => import('./state.js').then(m => m.be.update('exams/' + id, { practice: true })), exId);
   await act(stu, 'rv-top'); await act(stu, 'home');
   await stu.waitForSelector('[data-a="open-practice"]'); await act(stu, 'open-practice');
   await stu.waitForSelector('[data-a="pr-pick"]');

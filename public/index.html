@@ -44,22 +44,30 @@ button:disabled{cursor:not-allowed}
 .bar button{font-weight:700;padding:5px 11px;border-radius:9px;background:var(--soft);font-size:13px;flex:none}
 .prog{flex:none;height:4px;background:var(--soft)}.prog i{display:block;height:100%;background:var(--pri);border-radius:0 4px 4px 0;transition:width .25s}
 .body{flex:1;min-height:0;overflow:hidden auto;padding:20px 18px 14px;display:flex;flex-direction:column;gap:14px;overscroll-behavior:contain}
-/* 문항 쪽: 세로에서는 문제 아래에 답, 가로에서는 문제 왼쪽 · 답 오른쪽 */
-.qa,.qb{display:flex;flex-direction:column;gap:14px;min-width:0}
-.body.split>.qb{flex:1 0 auto}
-@media (orientation:landscape) and (max-height:560px){
-  .phone{max-width:none}
-  .bar{padding-top:calc(6px + env(safe-area-inset-top,0px));padding-bottom:6px;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
-  .body{padding:12px max(18px,env(safe-area-inset-right,0px)) 10px max(18px,env(safe-area-inset-left,0px))}
-  .body.split{flex-direction:row;gap:20px;overflow:hidden}
-  .body.split>.qa,.body.split>.qb{flex:1 1 0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:4px}
-  .foot{padding:6px max(14px,env(safe-area-inset-right,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px))}
-  .btn{min-height:42px;padding:9px 10px}
-  .q{font-size:19px}.h1{font-size:22px}
-  .pic,.pic img{max-height:46vh}
-  .ta{min-height:90px}
-  .opt{min-height:46px;padding:10px 12px}
-}
+/* 문항 쪽: 세로 한 화면. 넘치면 --fit 으로 글씨·사진을 조금 줄입니다(app.js fitQ) */
+.qa,.qb{display:flex;flex-direction:column;gap:calc(14px * var(--fit,1));min-width:0}
+.qbody{gap:calc(14px * var(--fit,1));padding-top:calc(20px * var(--fit,1));touch-action:pan-y}
+.qbody>.qb{flex:1 0 auto}
+.qbody .q{font-size:calc(clamp(20px,5.4vw,24px) * var(--fit,1))}
+.qbody .opt{font-size:calc(clamp(17px,4.6vw,19px) * var(--fit,1));min-height:calc(54px * var(--fit,1));padding:calc(13px * var(--fit,1)) 14px}
+.qbody .pic,.qbody .pic img{max-height:calc(38vh * var(--fit,1))}
+.qbody .ta{min-height:calc(150px * var(--fit,1))}
+.qbody.in-next{animation:inN .22s ease-out}.qbody.in-prev{animation:inP .22s ease-out}.qbody.bump{animation:bump .35s ease-out}
+@keyframes inN{from{opacity:.3;transform:translateX(36px)}to{opacity:1;transform:none}}
+@keyframes inP{from{opacity:.3;transform:translateX(-36px)}to{opacity:1;transform:none}}
+@keyframes bump{0%,100%{transform:none}30%{transform:translateX(-14px)}60%{transform:translateX(8px)}}
+/* 세로로만: 휴대폰을 가로로 돌리면 가립니다 */
+body.turn::after{content:'휴대폰을 세로로 돌려 주세요';position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;background:#17231d;color:#fff;font-size:22px;font-weight:800;text-align:center;padding:24px}
+/* 카메라 확인: 화면 가득 거울처럼 */
+.campv{position:fixed;inset:0;z-index:80;background:#000;animation:fadeIn .25s ease-out}
+.campv video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+.campv .ring{position:absolute;left:50%;top:44%;width:min(68vw,330px);aspect-ratio:3/4;transform:translate(-50%,-50%);border-radius:50%;border:3px solid rgba(255,255,255,.9);box-shadow:0 0 0 200vmax rgba(10,20,15,.42)}
+.campv .msg{position:absolute;left:0;right:0;top:calc(22px + env(safe-area-inset-top,0px));text-align:center;color:#fff;font-size:18px;font-weight:700;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.campv .cnt{position:absolute;left:50%;bottom:calc(9vh + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:76px;height:76px;border-radius:50%;background:rgba(255,255,255,.92);color:var(--pri-d);display:flex;align-items:center;justify-content:center;font-size:38px;font-weight:900}
+.campv .cnt.pop{animation:pop .3s ease-out}
+.campv.out{opacity:0;transition:opacity .25s}
+@keyframes pop{from{transform:translateX(-50%) scale(1.35)}to{transform:translateX(-50%) scale(1)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
 /* 내용이 길면 줄어들지 않고 쪽 안에서 스크롤됩니다 (보기 글자가 겹치는 것 방지) */
 .body>*{flex-shrink:0}
 .body.center{justify-content:center}
@@ -209,6 +217,7 @@ td.pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:260px}
 @media(max-width:560px){.desk header{position:static}}
 .desk header .undoredo button:disabled{opacity:.35}
 /* 테스트 학생 화면 띠 */
+.codepill{font-size:16px;padding:3px 12px;cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:manipulation}
 .dim{color:#9aa3ae;font-weight:400;font-style:normal}
 #bellbox{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(40,60,90,.18);z-index:60}#bellbox[hidden]{display:none}
 .bellcard{background:#fff;border-radius:22px;padding:26px 34px;text-align:center;box-shadow:0 18px 50px rgba(40,70,120,.25);display:flex;flex-direction:column;gap:10px;align-items:center;animation:bellin .35s ease-out}

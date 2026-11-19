@@ -52,7 +52,7 @@ const pill = m => { const s = ST[m.status] || ST.draft; return `<span class="pil
 const meta = () => S.exams[P.id] || {};
 // 안내 쪽과 마무리 쪽은 앱이 자동으로 만듭니다. 문항 목록에는 문제만 둡니다.
 const questionsOnly = pages => pages.filter(p => p.t !== 'intro' && p.t !== 'end');
-const isLeave = e => e.t === 'leave' || e.t === 'unpin' || e.t === 'nopin';
+const isLeave = e => e.t === 'leave' || e.t === 'unpin' || e.t === 'unfull' || e.t === 'nopin';
 // 잠겨 있어 교수의 확인이 필요한 학생인가
 const isLocked = a => !!a && !a.submittedAt && C.leaveSummary(a.ev).locks > (a.unlock || 0);
 const totalTime = a => Object.values((a && a.tm) || {}).reduce((x, y) => x + (Number(y) || 0), 0);
@@ -91,7 +91,7 @@ function live() {
 function viewList() {
   const keep = { t: $('n-title') ? $('n-title').value : '', m: $('n-min') ? $('n-min').value : '50', f: document.activeElement && document.activeElement.id };
   const list = Object.entries(S.exams).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
-  app.innerHTML = `<div class="desk"><header><h1 data-a="brand">푸른시험</h1>${entry.code ? `<span class="pill blue" style="font-size:16px;padding:3px 12px">입장 코드 ${esc(entry.code)}</span>` : ''}${histButtons()}<button data-a="test-open">학생으로 테스트</button><button data-a="people">학생 · 반 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
+  app.innerHTML = `<div class="desk"><header><h1 data-a="brand">푸른시험</h1>${codePill()}${histButtons()}<button data-a="test-open">학생으로 테스트</button><button data-a="people">학생 · 반 (${students().length}명)</button><button data-a="logout">로그아웃</button></header>
     <main id="listMain">
       <div class="panel"><h2>새 시험 만들기</h2>
         <div class="row"><label class="f" style="flex:1;min-width:180px">시험 이름<input class="in" id="n-title" placeholder="예: 기계공작법 중간고사" maxlength="60"></label>
@@ -133,6 +133,16 @@ function paintCode() {
     <button class="btn s" data-a="code-save">저장</button><button class="btn s gh" data-a="code-rand">새 코드 만들기</button>${entry.code ? '<button class="btn s gh" data-a="code-off">코드 끄기</button>' : ''}
     <span class="pill ${entry.code ? 'ok' : ''}">${entry.code ? '켜짐' : '꺼짐 — 코드 없이 입장'}</span></div>`;
 }
+// 맨 위 입장 코드 표시: 세 번 연달아 누르면 바로 바꾸는 창이 뜹니다 (꺼져 있으면 회색 "입장 코드 꺼짐")
+const codePill = () => `<span class="pill codepill ${entry.code ? 'blue' : ''}" data-a="code-tap" title="세 번 누르면 바꿀 수 있어요">${entry.code ? `입장 코드 ${esc(entry.code)}` : '입장 코드 꺼짐'}</span>`;
+let codeTaps = 0, codeTapAt = 0;
+on('code-tap', () => {
+  const t = Date.now(); codeTaps = t - codeTapAt < 700 ? codeTaps + 1 : 1; codeTapAt = t;
+  if (codeTaps < 3) return;
+  codeTaps = 0;
+  modal(`<h2>입장 코드</h2><div class="sm">학생이 입장할 때 넣는 코드입니다. 모든 시험에 함께 쓰입니다. 바꿔도 이미 입장한 학생은 그대로입니다.</div><div id="codeBox"></div><button class="btn gh" data-a="modal-close">닫기</button>`);
+  paintCode(); const i = $('code-in'); if (i) { i.focus(); i.select(); }
+});
 const setCode = code => be.set('entry', code ? { code, need: true } : null);
 on('code-save', async () => { const c = $('code-in').value.trim(); if (c && !/^[A-Za-z0-9]{3,12}$/.test(c)) return toast('코드는 숫자나 영문 3~12자로 정해 주세요.'); await setCode(c); toast(c ? '입장 코드를 켰어요.' : '입장 코드를 껐어요.'); });
 on('code-rand', async () => { await setCode(String(1000 + Math.floor(Math.random() * 9000))); toast('새 코드를 만들었어요.'); });
@@ -200,7 +210,7 @@ on('p-back', () => { closeExam(); viewList(); });
 function paintHead() {
   if (!P || !$('phead')) return;
   const m = meta();
-  $('phead').innerHTML = `<button data-a="p-back">← 목록</button><h1 data-a="brand">${esc(m.title || '')}</h1><span>${pill(m)}</span>${entry.code ? `<span class="pill blue" style="font-size:16px;padding:3px 12px">입장 코드 ${esc(entry.code)}</span>` : ''}${histButtons()}<button data-a="test-open">학생으로 테스트</button><button class="band" id="pband" data-a="p-band" hidden></button>`;
+  $('phead').innerHTML = `<button data-a="p-back">← 목록</button><h1 data-a="brand">${esc(m.title || '')}</h1><span>${pill(m)}</span>${codePill()}${histButtons()}<button data-a="test-open">학생으로 테스트</button><button class="band" id="pband" data-a="p-band" hidden></button>`;
   paintBand(); paintHist();
   $('ptabs').innerHTML = [['run', '진행'], ['edit', '문항'], ['grade', '채점'], ['result', '결과']].map(([k, n]) => `<button data-a="p-tab" data-t="${k}" class="${P.tab === k ? 'on' : ''}">${n}</button>`).join('');
 }
@@ -335,13 +345,13 @@ function tabRun() {
       <div class="panel"><h2>지금까지의 점수 분포</h2>${histChart(scores, sheet.reduce((n, q) => n + q.pts, 0))}<div class="sm">자동 채점 기준이며 학생에게는 보이지 않습니다.</div></div>
     </div>
     <div class="panel"><div class="row"><h2 style="margin-right:auto">학생별 현황</h2>${clsFilter()}</div>
-      <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>상태</th><th class="num">남은 시간</th><th class="num">답한 문항</th><th class="num">이탈</th>${m.cam ? '<th class="num">카메라 경고</th>' : ''}<th class="num">잠금</th><th></th></tr>
+      <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>상태</th><th class="num">남은 시간</th><th class="num">답한 문항</th><th class="num">이탈</th>${C.camOn(m) ? '<th class="num">카메라 경고</th>' : ''}<th class="num">잠금</th><th></th></tr>
       ${rows.map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}${testPill(r.sid)}${bind[r.sid] ? '' : ' <span class="pill">입장 취소됨</span>'}</td>
         <td>${r.a && r.a.submittedAt ? `<span class="pill ok">제출 ${hhmmss(r.a.submittedAt)}</span>` : r.a && r.a.startedAt ? '<span class="pill blue">응시 중</span>' : '<span class="pill mid">입장</span>'}${r.a && r.a.dev ? ` <span class="pill">${r.a.dev.startsWith('app') ? '앱' : '웹'}</span>` : ''}</td>
         <td class="num" ${r.a && r.a.startedAt && !r.a.submittedAt ? `data-dl="${dlOf(m, r.a)}"` : ''}></td>
         <td class="num">${r.a ? `${r.cnt} / ${sheet.length}` : ''}</td>
         <td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td>
-        ${m.cam ? `<td class="num">${r.lv.face ? `<button class="mini" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.face}회</button>` : ''}${r.lv.camOff ? ' <span class="pill mid">카메라 꺼짐</span>' : ''}</td>
+        ${C.camOn(m) ? `<td class="num">${r.lv.face ? `<button class="mini" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.face}회</button>` : ''}${r.lv.camOff ? ' <span class="pill mid">카메라 꺼짐</span>' : ''}</td>
 ` : ''}
         <td class="num">${r.lv.locks ? `${r.lv.locks}회` : ''}${isLocked(r.a) ? ` <button class="mini red" data-a="unlock" data-sid="${esc(r.sid)}">잠금 해제</button>` : ''}</td>
         <td style="white-space:nowrap;text-align:right">${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">입장 취소</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button> ` : ''}${r.a ? `<button class="mini red" data-a="stu-del" data-sid="${esc(r.sid)}">지우기</button>` : ''}</td></tr>`).join('')}
@@ -434,20 +444,17 @@ on('ex-settings', () => {
     <label class="f">늦게 시작해도 되는 시간(분) — 전체 마감 = 시험 시간 + 이 시간<input class="in" id="s-late" type="number" min="0" max="300" value="${m.late >= 0 ? m.late : LATE}" ${m.status === 'running' ? 'disabled' : ''}></label>
     <label class="f">안내 쪽에 덧붙일 말 (선택)<textarea class="in" id="s-notice" rows="2" maxlength="500" placeholder="예: 계산기는 쓸 수 없습니다.">${esc((m.notice || {}).body || '')}</textarea></label>
     <label class="f">마무리 쪽에 보일 말 (선택)<textarea class="in" id="s-end" rows="2" maxlength="500" placeholder="예: 결과는 다음 주 수업 시간에 공개합니다.">${esc((m.end || {}).body || '')}</textarea></label>
-    <button class="check ${m.practice ? 'on' : ''}" data-a="s-practice" id="s-prac"><i>✓</i>문제풀이(학습) 모드로 공개</button>
-    <div class="sm">켜면 입장한 학생이 이 문항을 순서대로 풀며 정답과 해설을 바로 봅니다. 실제 시험 문항에는 켜지 마세요.</div>
-    <label class="f">화면을 벗어나면 잠그는 횟수 — 1회째는 경고, 이 횟수가 되면 잠금 · 0이면 잠그지 않고 기록만<input class="in" id="s-leavelock" type="number" min="0" max="20" value="${Number.isInteger(m.leaveLock) && m.leaveLock >= 0 ? m.leaveLock : 2}"></label>
-    <div class="sm">다른 앱이나 다른 화면으로 갔다가 돌아오면 시험 화면을 검게 가리고 경고합니다(아이폰 포함). 정한 횟수가 되면 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 새로 고침도 한 번 벗어난 것으로 셉니다.</div>
-    <button class="check ${m.cam ? 'on' : ''}" data-a="s-practice" id="s-cam"><i>✓</i>전면 카메라로 얼굴 확인</button>
-    <div class="sm">켜면 시험 중 얼굴이 화면에서 사라지거나 고개가 정한 각도보다 더 돌아가거나(좌우) 숙이거나 든(위아래) 상태가 정한 시간 넘게 이어질 때 화면을 가리고 경고를 기록합니다. 경고가 정한 횟수만큼 쌓이면 화면이 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 영상은 저장하지 않습니다. 기기가 뜨거워지거나 배터리가 아래 값보다 적으면 카메라를 저절로 끕니다.</div>
+    <button class="check ${C.camOn(m) ? 'on' : ''}" data-a="s-practice" id="s-cam"><i>✓</i>전면 카메라로 얼굴 확인</button>
+    <div class="sm">켜면 시험 중 얼굴이 화면에서 사라지거나 고개가 정한 각도보다 더 돌아가거나(좌우) 숙이거나 든(위아래) 상태가 정한 시간 넘게 이어질 때 화면을 가리고 경고를 기록합니다. 경고가 정한 횟수만큼 쌓이면 화면이 잠기고, 진행 탭에서 교수님이 풀어 줍니다. 영상은 저장하지 않습니다. 기기가 뜨거워지거나 배터리가 아래 값보다 적으면 카메라를 저절로 끕니다.<br><b>화면 벗어남</b>: 다른 앱으로 가거나 전체 화면을 빠져나가면 시험 화면을 가리고 경고합니다(새로 고침도 1회). 정한 횟수가 되면 잠깁니다. 카메라를 꺼도 적용됩니다.</div>
     <div class="pgrid">
-      <label class="pcell">위아래 각도(도)<input class="in" id="s-campitch" type="number" min="5" max="90" value="${Number.isFinite(m.camPitch) ? m.camPitch : 25}"><small>이보다 더 숙이거나 들면 경고</small></label>
-      <label class="pcell">좌우 각도(도)<input class="in" id="s-camyaw" type="number" min="5" max="90" value="${Number.isFinite(m.camYaw) ? m.camYaw : 30}"><small>이보다 더 돌리면 경고</small></label>
-      <label class="pcell">이어진 시간(초)<input class="in" id="s-camsec" type="number" min="1" max="60" value="${Number.isFinite(m.camSec) ? m.camSec : 3}"><small>이만큼 계속되면 경고</small></label>
-      <label class="pcell">잠그는 경고 횟수<input class="in" id="s-camlock" type="number" min="0" max="20" value="${Number.isInteger(m.camLock) && m.camLock >= 0 ? m.camLock : 3}"><small>0이면 잠그지 않음</small></label>
+      <label class="pcell">화면 벗어남 잠금 횟수<input class="in" id="s-leavelock" type="number" min="0" max="20" value="${Number.isInteger(m.leaveLock) && m.leaveLock >= 0 ? m.leaveLock : C.CAM_DEF.leaveLock}"><small>이 횟수면 잠금 · 0이면 기록만</small></label>
+      <label class="pcell">위아래 각도(도)<input class="in" id="s-campitch" type="number" min="5" max="90" value="${Number.isFinite(m.camPitch) ? m.camPitch : C.CAM_DEF.camPitch}"><small>이보다 더 숙이거나 들면 경고</small></label>
+      <label class="pcell">좌우 각도(도)<input class="in" id="s-camyaw" type="number" min="5" max="90" value="${Number.isFinite(m.camYaw) ? m.camYaw : C.CAM_DEF.camYaw}"><small>이보다 더 돌리면 경고</small></label>
+      <label class="pcell">이어진 시간(초)<input class="in" id="s-camsec" type="number" min="1" max="60" value="${Number.isFinite(m.camSec) ? m.camSec : C.CAM_DEF.camSec}"><small>이만큼 계속되면 경고</small></label>
+      <label class="pcell">잠그는 경고 횟수<input class="in" id="s-camlock" type="number" min="0" max="20" value="${Number.isInteger(m.camLock) && m.camLock >= 0 ? m.camLock : C.CAM_DEF.camLock}"><small>0이면 잠그지 않음</small></label>
     </div>
     <label class="f">카메라를 끄는 배터리 잔량(%)<input class="in" id="s-batt" type="number" min="0" max="100" value="${m.camBatt >= 0 ? m.camBatt : 20}"></label>
-    <button class="check ${m.appOnly ? 'on' : ''}" data-a="s-practice" id="s-app"><i>✓</i>안드로이드는 앱으로만 응시</button>
+    <button class="check ${C.appOnlyOn(m) ? 'on' : ''}" data-a="s-practice" id="s-app"><i>✓</i>안드로이드는 앱으로만 응시</button>
     <div class="sm">켜면 안드로이드 휴대폰의 인터넷 창(크롬 등)으로는 시작할 수 없고, 앱 내려받기 안내가 나옵니다. 아이폰은 그대로 웹으로 봅니다.</div>
     <button class="btn" data-a="s-save">저장</button>
     <hr style="border:0;border-top:1px solid var(--line)">
@@ -457,14 +464,13 @@ on('ex-settings', () => {
 });
 on('s-practice', el => el.classList.toggle('on'));
 on('s-save', async () => {
-  const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), practice = $('s-prac').classList.contains('on'), appOnly = $('s-app').classList.contains('on'), cam = $('s-cam').classList.contains('on'), camBatt = Math.max(0, Math.min(100, Math.round(+$('s-batt').value || 0))), camLock = Math.max(0, Math.min(20, Math.round(+$('s-camlock').value || 0))),
-    camYaw = Math.max(5, Math.min(90, Math.round(+$('s-camyaw').value || 30))), camPitch = Math.max(5, Math.min(90, Math.round(+$('s-campitch').value || 25))), camSec = Math.max(1, Math.min(60, Math.round(+$('s-camsec').value || 3))), leaveLock = Math.max(0, Math.min(20, Math.round(+$('s-leavelock').value || 0)));
+  const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), appOnly = $('s-app').classList.contains('on'), cam = $('s-cam').classList.contains('on'), camBatt = Math.max(0, Math.min(100, Math.round(+$('s-batt').value || 0))), camLock = Math.max(0, Math.min(20, Math.round(+$('s-camlock').value || 0))),
+    camYaw = Math.max(5, Math.min(90, Math.round(+$('s-camyaw').value || C.CAM_DEF.camYaw))), camPitch = Math.max(5, Math.min(90, Math.round(+$('s-campitch').value || C.CAM_DEF.camPitch))), camSec = Math.max(1, Math.min(60, Math.round(+$('s-camsec').value || C.CAM_DEF.camSec))), leaveLock = Math.max(0, Math.min(20, Math.round(+$('s-leavelock').value || 0)));
   const late = Math.round(+$('s-late').value);
   const noticeBody = $('s-notice').value.trim(), endBody = $('s-end').value.trim();   // 확인 창이 뜨면 이 칸들이 사라지므로 미리 읽어 둡니다
   if (!title || !(minutes >= 1 && minutes <= 300) || !(late >= 0 && late <= 300)) return toast('이름과 시간을 확인해 주세요.');
-  if (practice && ['open', 'running'].includes(meta().status)) return toast('시험이 열려 있는 동안에는 문제풀이 공개를 켤 수 없어요.', 4000);
-  if (practice && !meta().practice && meta().status !== 'draft' && !(await confirmBox('시험 문항을 문제풀이로 공개할까요?', '학생이 정답과 해설을 모두 볼 수 있게 됩니다.', '공개', { danger: true }))) return;
-  await setMeta({ title, minutes, late, practice, appOnly, cam, camBatt, camLock, camYaw, camPitch, camSec, leaveLock, notice: { title: '', body: noticeBody }, end: { title: '고생하셨습니다', body: endBody } }); closeModal(); toast('저장했어요.');
+  // 문제풀이(학습) 공개는 설정에서 뺐습니다(시험이 끝난 뒤 "결과 공개"로 해설을 봅니다). 예전에 켜 둔 것이 있으면 저장할 때 끕니다.
+  await setMeta({ title, minutes, late, practice: false, appOnly, cam, camBatt, camLock, camYaw, camPitch, camSec, leaveLock, notice: { title: '', body: noticeBody }, end: { title: '고생하셨습니다', body: endBody } }); closeModal(); toast('저장했어요.');
 });
 on('ex-wipe', async () => {
   if (!(await confirmBox('답안을 모두 지울까요?', '이 시험의 모든 학생 답안, 이탈 기록, 장문형 점수가 지워지고 시험이 "준비 중"으로 돌아갑니다. <b>되돌릴 수 없습니다.</b>', '모두 지우기', { danger: true }))) return;
@@ -920,7 +926,7 @@ function paintPreview() {
   else {
     const o = order[PV.idx - 1], q = PV.sheet.find(x => x.id === o.id);
     inner = `<div class="bar"><span>${PV.idx} / ${n}</span><span class="clock">${C.fmtClock((m.minutes || 50) * 60000)}</span></div><div class="prog"><i style="width:${PV.idx / n * 100}%"></i></div>
-      <div class="body split"><div class="qa"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, P.imgs)}</div><div class="qb">${answerHtml(q, o, PV.ans[q.id], 'pv-pick', 'pv-tick')}<div class="save" style="margin-top:auto">✓ 저장됨</div></div></div>`;
+      <div class="body qbody"><div class="qa"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, P.imgs)}</div><div class="qb">${answerHtml(q, o, PV.ans[q.id], 'pv-pick', 'pv-tick')}<div class="save" style="margin-top:auto">✓ 저장됨</div></div></div>`;
   }
   modal(`<div class="row"><h2 style="margin-right:auto">학생 화면으로 보기</h2><button class="mini ${PV.shuffle ? 'ok' : ''}" data-a="pv-shuffle">${PV.shuffle ? '섞어서 보는 중' : '원래 순서로 보는 중'}</button><button class="mini" data-a="modal-close">닫기</button></div>
     <div class="sm">${PV.idx === 0 ? '안내 쪽' : PV.idx === n + 1 ? '마무리 쪽' : `${PV.idx}번 문항`} · 여기서 누른 답은 저장되지 않습니다. 실제 시험에서는 학생마다 문제와 보기 순서가 다릅니다.</div>

@@ -298,17 +298,22 @@ export function leaveSummary(ev) {
     else if (e.t === 'unlocked') { warn = 0; lwarn = 0; held = false; }
     else if (held) continue;
     else if (e.t === 'face') warn++;
-    else if (e.t === 'leave' || e.t === 'unpin') lwarn++;
+    else if (LEAVES.includes(e.t)) lwarn++;
   }
   const cam = list.filter(e => ['camoff', 'camon', 'camfail', 'nocam'].includes(e.t)).pop();
   return {
-    list, count: list.filter(e => e.t === 'leave' || e.t === 'unpin').length,
+    list, count: list.filter(e => LEAVES.includes(e.t)).length,
     face: list.filter(e => e.t === 'face').length,     // 카메라 경고 횟수
     locks: list.filter(e => e.t === 'lock' || e.t === 'lockout').length,    // 화면이 잠긴 횟수 (카메라 · 화면 벗어남)
     warn, lwarn, camOff: !!cam && cam.t !== 'camon',          // 지금 카메라가 꺼져 있는지
   };
 }
-export const EV_NAME = { leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함', face: '카메라 경고 (얼굴이 벗어남)', faceok: '얼굴이 다시 보임', lock: '화면 잠김 (카메라 경고가 정한 횟수만큼 쌓임)', lockout: '화면 잠김 (화면을 정한 횟수만큼 벗어남)', unlocked: '교수가 잠금을 풂',
+// 시험 설정 기본값: 카메라 얼굴 확인과 "안드로이드는 앱으로만"은 따로 끄지 않았으면 켜짐
+export const camOn = m => !!m && m.cam !== false;
+export const appOnlyOn = m => !!m && m.appOnly !== false;
+export const CAM_DEF = { camPitch: 20, camYaw: 20, camSec: 2, camLock: 3, leaveLock: 2 };
+const LEAVES = ['leave', 'unpin', 'unfull'];   // 화면을 벗어난 것으로 세는 기록
+export const EV_NAME = { unfull: '전체 화면이 풀림', leave: '화면을 벗어남', back: '돌아옴', unpin: '화면 고정이 풀림', nopin: '화면 고정 없이 계속함', face: '카메라 경고 (얼굴이 벗어남)', faceok: '얼굴이 다시 보임', lock: '화면 잠김 (카메라 경고가 정한 횟수만큼 쌓임)', lockout: '화면 잠김 (화면을 정한 횟수만큼 벗어남)', unlocked: '교수가 잠금을 풂',
   camoff: '카메라 자동 꺼짐 (발열·배터리)', camon: '카메라 다시 켜짐', camfail: '카메라를 켜지 못함', nocam: '카메라 없이 시작' };
 // 얼굴 감지기가 주는 점(오른쪽 눈, 왼쪽 눈, 코끝, 입, 오른쪽 귀, 왼쪽 귀; x는 0~1)으로 고개가 좌우로 돌아간 각도를 어림합니다.
 // 정면이면 코가 두 귀의 한가운데에 있고, 고개를 돌릴수록 한쪽 귀에 가까워집니다.
