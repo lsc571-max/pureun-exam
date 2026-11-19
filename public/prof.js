@@ -231,8 +231,11 @@ function lastIn() {
   }
   return last ? { ...last, name: (whoOf(last.sid) || {}).name || last.sid, end } : null;
 }
-const stillGoing = (m, now) => Object.values(P.answers).filter(a => began(a) && !a.submittedAt && dlOf(m, a) + 8000 > now).length;
-const allDone = (m, now) => Object.values(P.answers).some(began) && !stillGoing(m, now);
+// 테스트 학생은 세지 않습니다(교수님이 테스트하다 끝내도 실제 시험이 닫히지 않게)
+const realAns = () => Object.entries(P.answers).filter(([sid]) => !isTest(sid)).map(([, a]) => a);
+const stillGoing = (m, now) => realAns().filter(a => began(a) && !a.submittedAt && dlOf(m, a) + 8000 > now).length;
+// (다시 연 시험은 다시 연 뒤에 시작한 학생이 있어야 닫힘 — 예전 응시자만으로 바로 닫히지 않게)
+const allDone = (m, now) => realAns().some(a => began(a) && a.startedAt >= (m.startAt || 0) - 1000) && !stillGoing(m, now);
 function paintClock() {
   if (!P) return; const m = meta(), el = $('pclock'), now = be.now();
   const left = m.status === 'running' ? m.endAt - now : 0, bl = m.status === 'running' ? baseEnd(m) - now : 0;
@@ -245,8 +248,8 @@ function paintClock() {
   paintBand();
   // 전체 마감이 지나면(또는 "시험 종료"를 누르면) 학생들의 마지막 답과 제출을 8초 동안 받은 뒤 시험을 닫습니다
   if (m.status === 'running' && left < -8000 && !P.closing) { P.closing = true; setMeta({ status: 'ended' }).catch(() => {}).then(() => { if (P) P.closing = false; }); }
-  // 기본 종료가 지났고, 시험을 시작한 학생이 모두 끝났으면(제출했거나 자기 시간이 끝남) 시험을 저절로 닫습니다
-  else if (m.status === 'running' && !P.closing && bl < -8000 && allDone(m, now)) {
+  // 시험을 시작한 학생이 모두 끝났으면(제출했거나 자기 시간이 끝남) 기본 종료 전이라도 바로 닫습니다. 그 뒤에 온 학생은 볼 수 없습니다.
+  else if (m.status === 'running' && !P.closing && allDone(m, now)) {
     P.closing = true;
     setMeta({ status: 'ended', autoEnd: now }).then(() => toast('모든 학생이 끝나 시험을 자동으로 종료했어요.', 6000)).catch(() => {}).then(() => { if (P) P.closing = false; });
   }
@@ -387,7 +390,7 @@ on('ex-start', async () => {
 });
 on('ex-extend', async () => { const m = meta(); await setMeta({ extra: (m.extra || 0) + 5 * 60000, endAt: m.endAt + 5 * 60000 }); toast('모든 학생의 시간을 5분 연장했어요.'); });
 on('ex-end', async () => {
-  const going = Object.entries(P.answers).filter(([sid, a]) => began(a) && !a.submittedAt && !isTest(sid) && dlOf(meta(), a) > be.now()).length;
+  const going = stillGoing(meta(), be.now());
   if (!(await confirmBox('정말 강제 종료할까요?', `${going ? `<b>아직 푸는 학생 ${going}명</b>(늦게 들어온 학생 포함)도 ` : ''}모든 학생의 시험이 바로 끝나고, 지금까지 저장된 답안으로 채점됩니다.`, '강제 종료', { danger: true }))) return;
   await setMeta({ endAt: Math.min(meta().endAt, be.now()) });   // 남은 시간을 0으로 → 학생 답안이 자동 제출되고, 잠시 뒤 시험이 닫힙니다
   toast('종료하는 중입니다. 학생들의 마지막 답안을 받고 있어요.', 6000);
