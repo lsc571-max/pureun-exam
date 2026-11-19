@@ -205,7 +205,7 @@ on('open-exam', async el => {
   if (isOver(m)) return m.released ? openReview(id, 'result') : viewDone();
   if (m.status === 'running' && my.startedAt && my.sess) return be.now() < deadline(m, my.startedAt, my.until) ? startExam() : viewDone();
   // 시험이 이미 진행 중이면(늦게 들어온 학생) 시험을 누른 이때부터 각자 시간이 흐릅니다
-  if (m.status === 'running' && !my.startedAt) {
+  if (m.status === 'running' && !my.startedAt && !(C.appOnlyOn(m) && IS_ANDROID && !APP)) {   // (앱을 깔아야 하는 학생은 시간을 재지 않음)
     const first = { startedAt: be.now() };
     if (!my.who) first.who = { name: S.me.name, cls: S.me.cls };
     try { await within(be.update(`answers/${id}/${S.me.sid}`, first)); Object.assign(my, first); } catch (e) {}
@@ -308,6 +308,7 @@ async function startExam() {
       watch: null, camDown: false, guardKind: '',
     };
     X.idx = Math.min(X.idx, X.order.length - 1);
+    fullOn = !!document.fullscreenElement;   // 시작을 누를 때 켠 전체 화면이 풀리면 기록
     X.store = createAnswerStore({
       key: `ans:${id}:${S.me.sid}`, storage: localStorage,
       send: patch => be.update(path, Object.fromEntries(Object.entries(patch).map(([k, v]) => ['a/' + k, v]))),   // 시험 화면이 닫힌 뒤에도 같은 자리로 다시 보냅니다
@@ -445,6 +446,7 @@ document.addEventListener('touchstart', e => {
   swipe = null;
   if (view !== 'exam' || !X || X.done || e.touches.length !== 1 || !$('guard').hidden || !$('modal').hidden || !$('zoom').hidden) return;
   if (e.target.closest('textarea,input,select,.vid') || !e.target.closest('.qbody')) return;
+  const x0 = e.touches[0].clientX; if (x0 < 28 || x0 > innerWidth - 28) return;   // 화면 가장자리는 휴대폰의 '뒤로' 동작과 겹치므로 쓰지 않음
   swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
 }, { passive: true });
 document.addEventListener('touchend', e => {
@@ -535,7 +537,7 @@ function saveTime() {
 function wentAway(t) { if (!X || X.done || X.away) return; pauseTime(); X.away = true; X.awayWhy = t; X.leaves++; if (!locked()) X.leaveWarn++; logEv(t); }
 function cameBack() {
   if (!X || X.done || !X.away || X.unpinned) return;
-  X.away = false; logEv('back');
+  X.away = false; X.backAt = Date.now(); logEv('back');
   if (locked()) return;   // 잠긴 동안에는 잠금 화면 그대로
   const L = rule('leaveLock', C.CAM_DEF.leaveLock, 0, 20);
   if (L && X.leaveWarn >= L) { X.leaveWarn = 0; X.locks++; logEv('lockout'); return showLock('leave'); }
@@ -566,7 +568,7 @@ document.addEventListener('fullscreenchange', () => {
   if (!fullOn) return;
   fullOn = false;
   // 다른 앱으로 가서 풀린 것은 "화면을 벗어남"으로 이미 기록됩니다
-  setTimeout(() => { if (!X || X.done || document.hidden || X.away) return; wentAway('unfull'); cameBack(); }, 400);
+  setTimeout(() => { if (!X || X.done || document.hidden || X.away || !$('guard').hidden || Date.now() - (X.backAt || 0) < 2500) return; wentAway('unfull'); cameBack(); }, 400);
 });
 // 잠금이 풀린 뒤 등: 시험 중 화면을 누르면 다시 전체 화면으로
 document.addEventListener('pointerdown', () => { if (FS_OK && view === 'exam' && X && !X.done && !document.fullscreenElement && !locked() && $('guard').hidden) enterFull(); }, true);
@@ -574,7 +576,7 @@ document.addEventListener('pointerdown', () => { if (FS_OK && view === 'exam' &&
 const TOUCH = matchMedia('(pointer:coarse)').matches;
 function paintTurn() {
   const t = (screen.orientation && screen.orientation.type) || (Math.abs(window.orientation || 0) === 90 ? 'landscape' : 'portrait');
-  document.body.classList.toggle('turn', !APP && TOUCH && /landscape/.test(t));
+  document.body.classList.toggle('turn', !APP && TOUCH && Math.min(screen.width, screen.height) < 600 && /landscape/.test(t));   // 휴대폰만(태블릿 제외)
 }
 if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', paintTurn);
 window.addEventListener('orientationchange', () => setTimeout(paintTurn, 50));

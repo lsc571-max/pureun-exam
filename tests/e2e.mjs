@@ -479,6 +479,7 @@ try {
   // 시험이 이미 진행 중이면 시험을 누른 때부터 시간이 흐른다(안내 화면도 포함)
   assert.ok((await db(prof)).answers[exId]['20261301'].startedAt > 0, '늦게 온 학생의 시간이 시험을 눌렀을 때 시작되지 않음');
   assert.match(await stu2.textContent('#nleft'), /^(05:00|04:5\d)$/);
+  await prof.waitForFunction(() => /김철수.*안내 보는 중/s.test(document.getElementById('pmain').textContent));   // 아직 응시 중으로 세지 않음
   await act(stu2, 'agree'); await act(stu2, 'start');
   await stu2.waitForSelector('#clock');
   // 교수가 시작을 누른 지 한참 뒤에 시작했어도, 이 학생의 5분은 지금부터 흐른다

@@ -12,7 +12,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.os.Build;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.Manifest;
 import android.content.pm.PackageManager;
@@ -279,14 +282,24 @@ public class MainActivity extends Activity {
         if (examOn) tell("leave");
     }
 
-    /** 시험 중에는 위(시계·알림)와 아래(버튼) 줄을 숨겨 전체 화면으로 봅니다. 가장자리를 밀면 잠깐 보였다가 다시 숨습니다. */
+    /** 시험 중에는 위(시계·알림)와 아래(버튼) 줄을 숨겨 전체 화면으로 봅니다. 가장자리를 밀면 잠깐 보였다가 다시 숨습니다.
+     *  (키보드가 뜰 때 입력 칸이 가려지지 않도록, 화면 배치는 그대로 두고 줄만 숨깁니다) */
     @SuppressWarnings("deprecation")
     private void immersive(boolean on) {
-        View d = getWindow().getDecorView();
-        d.setSystemUiVisibility(on
-            ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-              | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            : View.SYSTEM_UI_FLAG_VISIBLE);
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                WindowInsetsController c = getWindow().getInsetsController();
+                if (c == null) return;
+                if (on) {
+                    c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    c.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                } else c.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+            } else {
+                getWindow().getDecorView().setSystemUiVisibility(on
+                    ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    : View.SYSTEM_UI_FLAG_VISIBLE);
+            }
+        } catch (Exception ignored) { }
     }
 
     @Override

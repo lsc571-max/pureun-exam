@@ -62,6 +62,9 @@ const testPill = sid => (isTest(sid) ? ' <span class="pill blue">테스트</span
 const whoOf = sid => people()[sid] || (P && P.answers[sid] && P.answers[sid].who) || null;
 const LATE = 30;   // 늦게 시작해도 되는 시간(분)의 기본값
 // 학생별 마감 시각: 따로 준 시각이 있으면 그 시각, 없으면 시작한 때 + 시험 시간(+연장). 전체 마감은 넘지 않음
+// 실제로 시험을 시작한 학생(시험 화면까지 들어감). 늦게 와서 시험을 누르기만 한 학생은 startedAt 만 있고 sess 가 없습니다(시간은 흐름).
+const began = a => !!a && !!a.startedAt && !!a.sess;
+const peeking = a => !!a && !!a.startedAt && !a.sess && !a.submittedAt;
 const dlOf = (m, a) => (!a || !a.startedAt ? 0 : Math.min(m.endAt || 0, a.until || (a.startedAt + (m.minutes || 0) * 60000 + (m.extra || 0))));
 // 학생 목록 = 반·학번·이름을 입력하고 입장한 학생
 const people = () => { const m = {}; for (const u of Object.values(users)) if (u && u.sid) m[u.sid] = { name: u.name, cls: u.cls }; return m; };
@@ -223,9 +226,9 @@ const baseEnd = m => Math.min(m.endAt || 0, (m.startAt || 0) + (m.minutes || 0) 
 function lastIn() {
   const m = meta(); let last = null, end = 0;
   for (const [sid, a] of Object.entries(P.answers)) {
-    if (!a || !a.startedAt || isTest(sid)) continue;
-    if (!last || a.startedAt > last.at) last = { sid, at: a.startedAt };
-    end = Math.max(end, dlOf(m, a));
+    if (!a || !a.startedAt || a.submittedAt || isTest(sid)) continue;   // 이미 제출한 학생은 빼고, 아직 시간이 흐르는 학생 중 가장 늦게 끝나는 학생
+    const d = dlOf(m, a);
+    if (!last || d > end) { last = { sid, at: a.startedAt }; end = d; }
   }
   return last ? { ...last, name: (whoOf(last.sid) || {}).name || last.sid, end } : null;
 }
@@ -262,8 +265,14 @@ function chime() {
 }
 function bell(m) {
   const k = `bell:${P.id}:${baseEnd(m)}`;
-  try { if (localStorage.getItem(k)) return; localStorage.setItem(k, '1'); } catch (e) { if (P.belled === k) return; P.belled = k; }
-  chime();
+  let rung = P.belled === k; try { rung = rung || !!localStorage.getItem(k); } catch (e) {}
+  if (rung) return;
+  // 소리가 실제로 날 수 있을 때(교수님이 화면을 한 번이라도 누른 뒤)만 "울렸음"으로 적고, 아니면 1분 동안 다시 시도합니다
+  try { if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === 'suspended') audio.resume().catch(() => {}); } catch (e) {}
+  const ok = !!audio && audio.state === 'running';
+  if (ok) { chime(); P.belled = k; try { localStorage.setItem(k, '1'); } catch (e) {} }
+  if (P.bellShown === k) return;
+  P.bellShown = k;
   const li = lastIn(), late = li && li.end > baseEnd(m) + 1000;
   const box = $('bellbox'); if (!box) return;
   box.innerHTML = `<div class="bellcard"><div class="bellico">🔔</div><h2>시험 시간이 끝났습니다</h2><div class="sm">${late ? `늦게 들어온 학생은 각자 시간이 끝날 때까지 계속 풉니다.<br><span class="dim">전체 마감 ${hhmmss(li.end)}</span>` : '학생들의 답안이 자동으로 제출됩니다.'}</div><button class="btn s" data-a="bell-close">닫기</button></div>`;
@@ -271,7 +280,7 @@ function bell(m) {
 }
 on('bell-close', () => { const b = $('bellbox'); if (b) b.hidden = true; });
 function liveCounts() {
-  const { sheet, key } = exam(), rows = Object.entries(P.answers).filter(([sid, a]) => a && a.startedAt && !isTest(sid));   // 테스트 학생은 세지 않음
+  const { sheet, key } = exam(), rows = Object.entries(P.answers).filter(([sid, a]) => began(a) && !isTest(sid));   // 테스트 학생은 세지 않음
   const tot = rows.map(([sid, a]) => C.scoreStudent(sheet, key, a.a, P.essay[sid]).total);
   return { go: rows.filter(([, a]) => !a.submittedAt).length, sub: rows.filter(([, a]) => a.submittedAt).length,
     lv: rows.filter(([, a]) => C.leaveSummary(a.ev).count).length, locked: rows.filter(([, a]) => isLocked(a)).length, avg: tot.length ? tot.reduce((x, y) => x + y, 0) / tot.length : 0, max: sheet.reduce((n, q) => n + q.pts, 0) };
@@ -324,7 +333,7 @@ function tabRun() {
     return { sid, ...r, a, lv, cnt: a && a.a ? Object.values(a.a).filter(x => x !== '' && x != null).length : 0 };
   }).filter(r => !P.cls || r.cls === P.cls).sort((a, b) => String(a.cls).localeCompare(String(b.cls)) || a.sid.localeCompare(b.sid));
   const real = rows.filter(r => !isTest(r.sid));   // 그래프·평균에는 테스트 학생을 넣지 않음
-  const sub = real.filter(r => r.a && r.a.submittedAt), go = real.filter(r => r.a && r.a.startedAt && !r.a.submittedAt), wait = real.filter(r => !(r.a && r.a.startedAt));
+  const sub = real.filter(r => r.a && r.a.submittedAt), go = real.filter(r => began(r.a) && !r.a.submittedAt), wait = real.filter(r => !began(r.a) && !(r.a && r.a.submittedAt));
   const btns = {
     draft: `<button class="btn s am" data-a="ex-status" data-s="open">학생에게 열기 (대기실)</button>`,
     open: `<button class="btn s am" data-a="ex-start">시험 시작 (모든 반 함께)</button><button class="btn s gh" data-a="ex-status" data-s="draft">대기실 닫기</button>`,
@@ -332,7 +341,7 @@ function tabRun() {
     ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '<button class="btn s gh" data-a="ex-reopen">못 본 학생 열기 (결과 공개 취소 후)</button>' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (못 본 학생 응시)</button>'}`,
   }[m.status || 'draft'];
   const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 학생의 "시험 시작" 버튼이 켜지고, 학생이 그 버튼을 누른 때부터 각자 시간이 흐릅니다. 늦게 온 학생은 목록에서 시험을 누른 때부터 흐릅니다.', running: `대기실 학생은 "시험 시작"을 누른 때부터, 늦게 온 학생은 시험을 누른 때부터 각자 ${m.minutes}분. ${hhmmss(m.endAt - m.minutes * 60000 - (m.extra || 0))}까지 들어오면 시간을 다 받습니다. 각자 시간이 끝나면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 장문형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
-  const scores = real.filter(r => r.a && r.a.startedAt).map(r => C.scoreStudent(sheet, key, r.a.a, P.essay[r.sid]).total);
+  const scores = real.filter(r => began(r.a)).map(r => C.scoreStudent(sheet, key, r.a.a, P.essay[r.sid]).total);
   $('pmain').innerHTML = `
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="sm">기본 종료까지</span><span class="pill blue" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
       <div class="sm" id="ptimes"></div>
@@ -347,7 +356,7 @@ function tabRun() {
     <div class="panel"><div class="row"><h2 style="margin-right:auto">학생별 현황</h2>${clsFilter()}</div>
       <div class="tw"><table><tr><th>반</th><th>학번</th><th>이름</th><th>상태</th><th class="num">남은 시간</th><th class="num">답한 문항</th><th class="num">이탈</th>${C.camOn(m) ? '<th class="num">카메라 경고</th>' : ''}<th class="num">잠금</th><th></th></tr>
       ${rows.map(r => `<tr><td>${esc(r.cls)}</td><td>${esc(r.sid)}</td><td>${esc(r.name)}${testPill(r.sid)}${bind[r.sid] ? '' : ' <span class="pill">입장 취소됨</span>'}</td>
-        <td>${r.a && r.a.submittedAt ? `<span class="pill ok">제출 ${hhmmss(r.a.submittedAt)}</span>` : r.a && r.a.startedAt ? '<span class="pill blue">응시 중</span>' : '<span class="pill mid">입장</span>'}${r.a && r.a.dev ? ` <span class="pill">${r.a.dev.startsWith('app') ? '앱' : '웹'}</span>` : ''}</td>
+        <td>${r.a && r.a.submittedAt ? `<span class="pill ok">제출 ${hhmmss(r.a.submittedAt)}</span>` : began(r.a) ? '<span class="pill blue">응시 중</span>' : peeking(r.a) ? '<span class="pill mid">안내 보는 중 (시간 흐름)</span>' : '<span class="pill mid">입장</span>'}${r.a && r.a.dev ? ` <span class="pill">${r.a.dev.startsWith('app') ? '앱' : '웹'}</span>` : ''}</td>
         <td class="num" ${r.a && r.a.startedAt && !r.a.submittedAt ? `data-dl="${dlOf(m, r.a)}"` : ''}></td>
         <td class="num">${r.a ? `${r.cnt} / ${sheet.length}` : ''}</td>
         <td class="num">${r.lv.count ? `<button class="mini red" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.count}회</button>` : ''}</td>
@@ -377,7 +386,7 @@ on('ex-end', async () => {
 });
 // 끝난 시험을 다시 엽니다 (시험을 못 본 학생용)
 function resumeModal() {
-  const m = meta(), started = Object.values(P.answers).filter(a => a.startedAt && !a.submittedAt).length;
+  const m = meta(), started = Object.values(P.answers).filter(a => began(a) && !a.submittedAt).length;
   modal(`<h2>시험 다시 열기</h2>
     <div class="txt">정한 시간 동안 시험이 다시 진행됩니다. 이미 제출한 학생은 다시 풀 수 없습니다.</div>
     <label class="f">다시 여는 시간(분)<input class="in" id="rs-min" type="number" min="1" max="300" value="${m.minutes || 50}"></label>
@@ -395,8 +404,12 @@ on('rs-lock', el => el.classList.toggle('on'));
 on('rs-go', async () => {
   const minutes = Math.round(+$('rs-min').value), lock = $('rs-lock').classList.contains('on');
   if (!(minutes >= 1 && minutes <= 300)) return toast('시간은 1~300분으로 입력해 주세요.');
-  const now = be.now(), u = { [`exams/${P.id}/status`]: 'running', [`exams/${P.id}/practice`]: false, [`exams/${P.id}/extra`]: 0, [`exams/${P.id}/endAt`]: now + minutes * 60000 };
-  for (const [sid, a] of Object.entries(P.answers)) if (a.startedAt && !a.submittedAt) u[`answers/${P.id}/${sid}/${lock ? 'submittedAt' : 'until'}`] = lock ? now : now + minutes * 60000;
+  const now = be.now(), u = { [`exams/${P.id}/status`]: 'running', [`exams/${P.id}/practice`]: false, [`exams/${P.id}/extra`]: 0, [`exams/${P.id}/startAt`]: now, [`exams/${P.id}/endAt`]: now + minutes * 60000 };
+  for (const [sid, a] of Object.entries(P.answers)) {
+    if (!a.startedAt || a.submittedAt) continue;
+    if (!began(a)) u[`answers/${P.id}/${sid}/startedAt`] = null;   // 시험을 눌러 보기만 한 학생은 "못 본 학생"으로: 다시 누른 때부터 새로 시간을 받음
+    else u[`answers/${P.id}/${sid}/${lock ? 'submittedAt' : 'until'}`] = lock ? now : now + minutes * 60000;
+  }
   await be.update('', u); closeModal(); toast(`${minutes}분 동안 다시 열었어요.`);
 });
 // 문항과 사진만 그대로 새 시험으로 복사합니다 (답안·점수는 복사하지 않음)
@@ -406,6 +419,7 @@ on('ex-copy', async () => {
   const src = P.id, id = 'e' + Date.now().toString(36), at = be.now();
   const [draft, sheet, key, imgs] = await Promise.all(['drafts/', 'sheets/', 'keys/', 'images/'].map(k => be.get(k + src)));
   const u = { ['exams/' + id]: { title: (m.title || '시험') + ' (재시험)', minutes: m.minutes || 50, status: 'draft', released: false, practice: false, n: m.n || 0, total: m.total || 0, notice: m.notice || null, end: m.end || null, at } };
+  for (const k of ['late', 'cam', 'appOnly', 'camBatt', 'camLock', 'camYaw', 'camPitch', 'camSec', 'leaveLock']) if (m[k] !== undefined) u['exams/' + id][k] = m[k];   // 시험 설정도 그대로
   if (draft) u['drafts/' + id] = { ...draft, at };
   if (sheet) u['sheets/' + id] = { ...sheet, at };
   if (key) u['keys/' + id] = { ...key, at };
@@ -802,7 +816,7 @@ function tabGrade() {
     return `<button data-a="g-q" data-id="${x.id}" class="${x.id === q.id ? 'on' : ''}">${nos[x.id]}번 ${C.KIND_NAME[C.kindOf(x)]} ${d === null ? `(${n}명)` : `(${d}/${n})`}</button>`;
   }).join('')}</div>`;
   if (k === 'short') {
-    const { sheet, key } = exam(), took = Object.values(P.answers).filter(a => a.startedAt);
+    const { sheet, key } = exam(), took = Object.values(P.answers).filter(a => began(a) || (a && a.submittedAt));
     const st = C.questionStats(sheet, key, took.map(a => ({ answers: a.a || {} }))).find(s => s.id === q.id);
     $('pmain').innerHTML = `<div class="panel">${tabs}<div class="q" style="font-size:18px">${esc(q.q)}</div>
       <div class="box ok"><b>정답으로 인정하는 답</b>\n${esc((q.answers || []).join(' / '))}</div>
@@ -861,7 +875,7 @@ function resultRows() {
   const ppl = people(), { sheet, key } = exam(), sids = new Set([...Object.keys(ppl), ...Object.keys(P.answers)]);
   const rows = [...sids].map(sid => {
     const r = whoOf(sid) || { name: '(이름 없음)', cls: '' }, a = P.answers[sid], sc = C.scoreStudent(sheet, key, a && a.a, P.essay[sid]);
-    return { sid, name: r.name, cls: r.cls, took: !!(a && a.startedAt), test: isTest(sid), a, lv: C.leaveSummary(a && a.ev), ...sc };
+    return { sid, name: r.name, cls: r.cls, took: began(a) || !!(a && a.submittedAt), test: isTest(sid), a, lv: C.leaveSummary(a && a.ev), ...sc };
   });
   return { sheet, key, rows };
 }
@@ -1033,7 +1047,7 @@ on('pdf-all', () => {
 const trashSid = (key, t) => (t && t.sid) || String(key).split('_')[0];
 on('stu-del', async el => {
   const id = P.id, sid = el.dataset.sid, w = whoOf(sid) || {}, m = meta(), cur = P.answers[sid];
-  if (cur && cur.startedAt && !cur.submittedAt && m.status === 'running' && !isTest(sid)) return toast('시험을 보는 중인 학생은 지울 수 없어요. 제출하거나 시험이 끝난 뒤에 지우세요.', 5000);
+  if (began(cur) && !cur.submittedAt && m.status === 'running' && !isTest(sid)) return toast('시험을 보는 중인 학생은 지울 수 없어요. 제출하거나 시험이 끝난 뒤에 지우세요.', 5000);
   if (!(await confirmBox(`${w.name || sid} 학생을 지울까요?`, `${esc(w.cls || '')} ${esc(sid)} ${esc(w.name || '')} 학생의 답안, 점수, 이탈 기록이 이 시험 결과에서 빠지고 <b>휴지통</b>으로 갑니다. 입장도 함께 취소됩니다. 휴지통에서 언제든 되살릴 수 있습니다.${['open', 'running'].includes(m.status) ? '\n\n시험이 아직 열려 있어서, 이 학생이 다시 입장하면 처음부터 다시 볼 수 있습니다.' : ''}`, '지우기', { danger: true }))) return;
   let key = '';
   await record(`${w.name || sid} 학생 지우기`, async () => {
