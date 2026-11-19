@@ -1,4 +1,5 @@
 name: 안드로이드 앱 만들기
+# (서명 열쇠는 저장소 비밀값 ANDROID_KEYSTORE_BASE64 — 같은 열쇠여야 앱 안 업데이트로 덮어 설치됨)
 on:
   push:
     branches: [main]
