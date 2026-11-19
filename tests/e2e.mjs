@@ -302,12 +302,19 @@ try {
   await coded.fill('#e-code', '4821'); await act(coded, 'enter');
   await coded.waitForSelector('[data-a="open-exam"]');
   await coded.close();
+  say('입장 코드는 시험 안 화면 맨 위에도, 어느 탭에서나 보인다');
+  await act(prof, 'modal-close'); await act(prof, 'p-open'); await prof.waitForSelector('#phead [data-a="p-back"]');
+  assert.match(await prof.textContent('#phead'), /입장 코드 4821/);
+  await act(prof, 'p-tab', '[data-t="grade"]'); assert.match(await prof.textContent('#phead'), /입장 코드 4821/);
+  await act(prof, 'p-tab', '[data-t="run"]');
+  await act(prof, 'p-back'); await act(prof, 'people');
   await act(prof, 'code-off');
   await prof.waitForFunction(() => /꺼짐/.test(document.getElementById('codeBox').textContent));
   await prof.click('#peopleBox tr:has-text("코드학생") [data-a="unbind"]'); await act(prof, 'dlg-yes');   // 나머지 테스트에 영향이 없게 입장 취소
   await prof.waitForFunction(() => !/코드학생/.test(document.getElementById('peopleBox').textContent));
   await act(prof, 'modal-close'); await act(prof, 'p-open');
   await prof.waitForSelector('[data-a="ex-start"]');
+  assert.ok(!/입장 코드/.test(await prof.textContent('#phead')), '코드를 껐는데 시험 화면에 남음');
 
   say('두 번째 기기는 같은 학번으로 못 들어온다');
   const stu2 = await ctx.newPage(); watch(stu2, '학생2');
@@ -413,7 +420,7 @@ try {
   say('시험 중 띠: 다른 탭에서도 진행 상황이 보이고, 누르면 진행 탭으로 간다');
   await act(prof, 'p-tab', '[data-t="edit"]');
   await prof.waitForSelector('#pband:not([hidden])');
-  assert.match(await prof.textContent('#pband'), /시험 중.*전체 마감까지.*응시 중 1명.*제출 0명.*이탈 1명.*평균 \d/s);
+  assert.match(await prof.textContent('#pband'), /시험 중.*기본 종료까지.*응시 중 1명.*제출 0명.*이탈 1명.*평균 \d/s);
   await row(prof, '첫째 문제').locator('[data-a="ed-edit"]').click();
   assert.match(await prof.textContent('#modal'), /시험이 진행 중입니다/);   // 시험 중에 고치려 하면 경고
   await act(prof, 'modal-close');
@@ -435,13 +442,31 @@ try {
   say('시간이 끝나면 자동으로 제출된다');
   await act(stu2, 'cls', '[data-c="B반"]'); await stu2.fill('#e-sid', '20261301'); await stu2.fill('#e-name', '김철수'); await act(stu2, 'enter');
   await stu2.waitForSelector('[data-a="open-exam"]'); await act(stu2, 'open-exam');
-  await stu2.waitForSelector('[data-a="agree"]'); await act(stu2, 'agree'); await act(stu2, 'start');
+  await stu2.waitForSelector('[data-a="agree"]');
+  // 시험이 이미 진행 중이면 시험을 누른 때부터 시간이 흐른다(안내 화면도 포함)
+  assert.ok((await db(prof)).answers[exId]['20261301'].startedAt > 0, '늦게 온 학생의 시간이 시험을 눌렀을 때 시작되지 않음');
+  assert.match(await stu2.textContent('#nleft'), /^(05:00|04:5\d)$/);
+  await act(stu2, 'agree'); await act(stu2, 'start');
   await stu2.waitForSelector('#clock');
   // 교수가 시작을 누른 지 한참 뒤에 시작했어도, 이 학생의 5분은 지금부터 흐른다
   assert.match(await stu2.textContent('#clock'), /^(05:00|04:5\d)$/, '늦게 시작한 학생이 시험 시간을 온전히 받지 못함');
   d = await db(prof);
   assert.ok(d.answers[exId]['20261301'].startedAt - d.answers[exId]['20261234'].startedAt > 3000);
+  say('교수 화면: 시작 · 기본 종료와, 흐리게 마지막 입장 학생 기준 전체 마감');
+  await prof.waitForFunction(() => /시작 .*기본 종료 .*전체 마감 .*김철수/.test(document.getElementById('ptimes').textContent));
+  assert.ok(await prof.locator('#ptimes .dim').count(), '전체 마감이 흐리게 표시되지 않음');
+  const first = await qText(stu2);
   await answer(stu2, { '첫째 문제': '나1', '둘째 문제': '나2', '셋째 문제': ['가3', '라3'], '넷째 문제': '금형', '서술 문제': '김철수 답' });
+  say('"더 풀기" → 안 푼 문제의 맨 앞으로, "다음"은 안 푼 문제만');
+  await act(stu2, 'qlist'); await act(stu2, 'submit'); await act(stu2, 'dlg-no');
+  await stu2.waitForSelector('.onlyband');
+  assert.match(await stu2.textContent('.onlyband'), /4개 남음/);
+  const left1 = await qText(stu2); assert.notEqual(left1, first, '푼 문제로 감');
+  const seenLeft = [left1];
+  for (let i = 0; i < 3; i++) { await act(stu2, 'next'); seenLeft.push(await qText(stu2)); }
+  assert.ok(!seenLeft.includes(first) && new Set(seenLeft).size === 4, '안 푼 문제만 돌지 않음: ' + seenLeft.join(','));
+  await act(stu2, 'next'); assert.equal(await qText(stu2), left1, '다시 처음 안 푼 문제로 돌아오지 않음');
+  await act(stu2, 'only-off'); assert.equal(await stu2.locator('.onlyband').count(), 0);
   await prof.evaluate(id => import('./state.js').then(m => m.be.update('exams/' + id, { endAt: Date.now() + 1500 })), exId);
   await stu2.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent), null, { timeout: 8000 });
   d = await db(prof);

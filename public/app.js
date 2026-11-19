@@ -203,7 +203,13 @@ on('open-exam', async el => {
   N = { id, checked: false, my };
   if (my.submittedAt) return viewDone();
   if (isOver(m)) return m.released ? openReview(id, 'result') : viewDone();
-  if (m.status === 'running' && my.startedAt) return be.now() < deadline(m, my.startedAt, my.until) ? startExam() : viewDone();
+  if (m.status === 'running' && my.startedAt && my.sess) return be.now() < deadline(m, my.startedAt, my.until) ? startExam() : viewDone();
+  // 시험이 이미 진행 중이면(늦게 들어온 학생) 시험을 누른 이때부터 각자 시간이 흐릅니다
+  if (m.status === 'running' && !my.startedAt) {
+    const first = { startedAt: be.now() };
+    if (!my.who) first.who = { name: S.me.name, cls: S.me.cls };
+    try { await within(be.update(`answers/${id}/${S.me.sid}`, first)); Object.assign(my, first); } catch (e) {}
+  }
   viewNotice();
 });
 const APK_URL = 'https://github.com/lsc571-max/pureun-exam/releases/latest/download/pureun-exam.apk';
@@ -230,7 +236,7 @@ function viewNotice() {
       <div class="h1">${esc(nt.title || m.title || '시험')}</div>
       ${nt.body ? `<div class="txt">${esc(nt.body)}</div>` : ''}
       <ul class="rules">
-        <li><b>시험 시작</b>을 누른 때부터 <b>${m.minutes}분</b>이 흐르고, 끝나면 자동으로 제출됩니다.</li>${running ? `<li>늦게 시작해도 전체 마감 시각 <b>${hhmmss(m.endAt).slice(0, 5)}</b>에는 모두 끝납니다.</li>` : ''}
+        ${running && N.my.startedAt ? `<li><b>시험을 누른 때부터 시간이 흐르고 있습니다.</b> 남은 시간 <b id="nleft">${C.fmtClock(Math.max(0, deadline(m, N.my.startedAt, N.my.until) - be.now()))}</b> · 끝나면 자동으로 제출됩니다.</li>` : `<li><b>시험 시작</b>을 누른 때부터 <b>${m.minutes}분</b>이 흐르고, 끝나면 자동으로 제출됩니다.</li>`}${running ? `<li>늦게 시작해도 전체 마감 시각 <b>${hhmmss(m.endAt).slice(0, 5)}</b>에는 모두 끝납니다.</li>` : ''}
         <li>문제 순서와 보기 순서는 학생마다 다릅니다.</li>
         <li>시험 화면을 벗어나면 <b>횟수와 시각이 기록</b>됩니다.${m.leaveLock === 0 ? '' : ` <b>${Number.isFinite(m.leaveLock) && m.leaveLock > 0 ? m.leaveLock : 2}번</b> 벗어나면 화면이 잠기고, 교수님이 풀어 주셔야 합니다.`}</li>
         <li>화면 캡처·녹화·복사는 금지입니다.</li>
@@ -250,7 +256,12 @@ function viewNotice() {
   clearInterval(noticeT);
   // 앱: 방해 금지 설정을 바꾸고 돌아오면 안내와 시작 버튼을 바로 고쳐 보여 줍니다
   const dndShown = `${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}`;
-  if (APP) noticeT = setInterval(() => { if (view !== 'notice') return clearInterval(noticeT); if (`${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}` !== dndShown) keepScroll(viewNotice); }, 1000);
+  noticeT = setInterval(() => {
+    if (view !== 'notice') return clearInterval(noticeT);
+    const nl = $('nleft'), mm = S.exams[N.id];
+    if (nl && mm && N.my.startedAt) { const l = deadline(mm, N.my.startedAt, N.my.until) - be.now(); nl.textContent = C.fmtClock(Math.max(0, l)); if (l <= 0) { clearInterval(noticeT); return viewDone(); } }
+    if (APP && `${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}` !== dndShown) keepScroll(viewNotice);
+  }, 1000);
 }
 on('agree', () => { N.checked = !N.checked; const y = document.querySelector('.body').scrollTop; viewNotice(); document.querySelector('.body').scrollTop = y; });
 on('dnd', () => {
@@ -362,10 +373,14 @@ function renderExam() {
   if (X.curQ !== q.id) { saveTime(); X.curQ = q.id; X.qStart = paused() ? 0 : Date.now(); }
   sessionStorage.setItem('idx:' + X.id, X.idx);
   const body = answerHtml(q, o, a);
+  const rest = X.only ? leftIdx().length : 0;
+  const onlyBar = X.only ? `<div class="onlyband"><span>안 푼 문제만 보는 중 · <b>${rest}개</b> 남음</span><button data-a="only-off">전체 보기</button></div>` : '';
+  const prevOff = X.only ? !leftIdx().some(i => i < X.idx) : !X.idx;
+  const nextBtn = X.only ? '<button class="btn" data-a="next">다음</button>' : X.idx < n - 1 ? '<button class="btn" data-a="next">다음</button>' : '<button class="btn am" data-a="qlist">제출</button>';
   app.innerHTML = `<div class="phone"><div class="bar"><span>${X.idx + 1} / ${n}</span>${S.exams[X.id] && S.exams[X.id].cam ? '<span class="watch"><i></i>부정행위 감시 중</span>' : ''}<span class="clock" id="clock">--:--</span></div>
-    <div class="prog"><i style="width:${(X.idx + 1) / n * 100}%"></i></div>
+    <div class="prog"><i style="width:${(X.idx + 1) / n * 100}%"></i></div>${onlyBar}
     <div class="body split"><div class="qa"><div class="chip">${esc(typeChip(q))}</div><div class="q">${esc(q.q)}</div>${media(q, X.imgs)}</div><div class="qb">${body}<div class="save" id="save" style="margin-top:auto"></div></div></div>
-    <div class="foot"><button class="btn gh" data-a="prev" ${X.idx ? '' : 'disabled'}>이전</button><button class="btn gh" data-a="qlist">문항 목록</button>${X.idx < n - 1 ? '<button class="btn" data-a="next">다음</button>' : '<button class="btn am" data-a="qlist">제출</button>'}</div></div>`;
+    <div class="foot"><button class="btn gh" data-a="prev" ${prevOff ? 'disabled' : ''}>이전</button><button class="btn gh" data-a="qlist">문항 목록</button>${nextBtn}</div></div>`;
   paintSave(); tick();
   const ta = $('essay') || $('short');
   if (ta) ta.addEventListener('input', () => {
@@ -394,9 +409,27 @@ on('tick', el => {
   const onb = next.includes(v); el.classList.toggle('on', onb); el.setAttribute('aria-pressed', onb);
   el.querySelector('.n').textContent = onb ? '✓' : String([...el.parentNode.querySelectorAll('.opt')].indexOf(el) + 1);
 });
-on('prev', () => { if (X.idx > 0) { X.idx--; renderExam(); } });
-on('next', () => { if (X.idx < X.order.length - 1) { X.idx++; renderExam(); } });
+// "더 풀기"를 누르면 안 푼 문제만 차례로 봅니다(X.only). 다 풀면 1번부터 모든 문제를 다시 보여 줍니다.
+on('prev', () => {
+  flushTyping();
+  if (X.only) { const b = leftIdx().filter(i => i < X.idx); if (b.length) { X.idx = b[b.length - 1]; renderExam(); } return; }
+  if (X.idx > 0) { X.idx--; renderExam(); }
+});
+on('next', () => {
+  flushTyping();
+  if (X.only) {
+    const rest = leftIdx().filter(i => i !== X.idx);
+    if (!rest.length) {
+      if (!answered(X.order[X.idx].id)) return toast('이 문제가 마지막 안 푼 문제예요.');
+      X.only = false; X.idx = 0; renderExam(); return toast('모든 문제를 풀었어요. 1번부터 전체를 보여 줍니다.');
+    }
+    X.idx = rest.find(i => i > X.idx) ?? rest[0]; renderExam(); return;
+  }
+  if (X.idx < X.order.length - 1) { X.idx++; renderExam(); }
+});
+on('only-off', () => { flushTyping(); X.only = false; renderExam(); });
 const answered = id => { const v = X.store.get(id); return v !== undefined && v !== null && v !== ''; };
+const leftIdx = () => X.order.map((o, i) => answered(o.id) ? -1 : i).filter(i => i >= 0);
 on('qlist', () => {
   flushTyping();
   const left = X.order.filter(o => !answered(o.id)).length;
@@ -405,11 +438,12 @@ on('qlist', () => {
     <div class="sm">번호를 누르면 그 문항으로 갑니다. 색이 칠해진 번호는 답한 문항입니다.</div>
     <div class="row"><button class="btn gh" data-a="modal-close">돌아가기</button><button class="btn am" data-a="submit">제출</button></div>`);
 });
-on('goto', el => { X.idx = +el.dataset.i; closeModal(); renderExam(); });
+on('goto', el => { X.idx = +el.dataset.i; X.only = false; closeModal(); renderExam(); });
 on('submit', async () => {
   const left = X.order.filter(o => !answered(o.id)).length;
   const ok = await confirmBox('제출할까요?', `${left ? `<b>안 푼 문항이 ${left}개</b> 있습니다.\n` : ''}제출하면 다시 고칠 수 없습니다.`, '제출', { cancel: '더 풀기' });
-  if (ok && X) finish(false);
+  if (ok && X) return finish(false);
+  if (X && !X.done && left) { closeModal(); X.only = true; X.idx = leftIdx()[0]; renderExam(); }   // 더 풀기 → 안 푼 문제 맨 앞으로
 });
 // auto=true: 시간이 끝났거나 교수가 종료함
 async function finish(auto) {

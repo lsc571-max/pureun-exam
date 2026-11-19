@@ -73,7 +73,7 @@ export function start() {
     be.on('bind', v => { bind = v || {}; live(); }),
     be.on('users', v => { users = v || {}; live(); if (!P && $('listMain')) viewList(); }),
   ];
-  baseSubs.push(be.on('entry', v => { entry = v || {}; if ($('codeBox')) paintCode(); if (!P && $('listMain')) viewList(); }));
+  baseSubs.push(be.on('entry', v => { entry = v || {}; if ($('codeBox')) paintCode(); if (!P && $('listMain')) viewList(); if (P) paintHead(); }));
   // 반 목록을 서버에 적어 둡니다 (비어 있으면 기본값 A반·B반)
   be.get('classes').then(v => { if (!v) saveClasses(C.DEFAULT_CLASSES).catch(() => {}); }).catch(() => {});
   P = null; viewList();
@@ -190,7 +190,7 @@ async function openExam(id, tab = 'run') {
   P.unsubs.push(be.on('answers/' + id, v => { P.answers = v || {}; live(); }));
   P.unsubs.push(be.on('essay/' + id, v => { P.essay = v || {}; live(); }));
   P.unsubs.push(be.on('trash/' + id, v => { P.trash = v || {}; if (P.tab === 'result') live(); }));
-  app.innerHTML = `<div class="desk"><header id="phead"></header><main><div class="tabs" id="ptabs"></div><div id="pmain" style="display:flex;flex-direction:column;gap:14px"></div></main></div>`;
+  app.innerHTML = `<div class="desk"><header id="phead"></header><main><div class="tabs" id="ptabs"></div><div id="pmain" style="display:flex;flex-direction:column;gap:14px"></div></main><div id="bellbox" hidden></div></div>`;
   paintHead(); renderTab();
   clockT = setInterval(paintClock, 1000);
 }
@@ -200,17 +200,32 @@ on('p-back', () => { closeExam(); viewList(); });
 function paintHead() {
   if (!P || !$('phead')) return;
   const m = meta();
-  $('phead').innerHTML = `<button data-a="p-back">← 목록</button><h1 data-a="brand">${esc(m.title || '')}</h1><span>${pill(m)}</span>${histButtons()}<button data-a="test-open">학생으로 테스트</button><button class="band" id="pband" data-a="p-band" hidden></button>`;
+  $('phead').innerHTML = `<button data-a="p-back">← 목록</button><h1 data-a="brand">${esc(m.title || '')}</h1><span>${pill(m)}</span>${entry.code ? `<span class="pill blue" style="font-size:16px;padding:3px 12px">입장 코드 ${esc(entry.code)}</span>` : ''}${histButtons()}<button data-a="test-open">학생으로 테스트</button><button class="band" id="pband" data-a="p-band" hidden></button>`;
   paintBand(); paintHist();
   $('ptabs').innerHTML = [['run', '진행'], ['edit', '문항'], ['grade', '채점'], ['result', '결과']].map(([k, n]) => `<button data-a="p-tab" data-t="${k}" class="${P.tab === k ? 'on' : ''}">${n}</button>`).join('');
 }
 on('p-band', () => { P.tab = 'run'; hideCtx(); paintHead(); renderTab(); });
 on('p-tab', el => { P.tab = el.dataset.t; hideCtx(); hideToast(); paintHead(); renderTab(); });
 function renderTab() { if (!P) return; ({ run: tabRun, edit: tabEdit, grade: tabGrade, result: tabResult })[P.tab](); paintClock(); }
+// 기본 종료 = 교수가 시작한 때 + 시험 시간(+연장). 이때 교수 화면에서 종이 울립니다.
+const baseEnd = m => Math.min(m.endAt || 0, (m.startAt || 0) + (m.minutes || 0) * 60000 + (m.extra || 0));
+// 가장 늦게 시작한 학생(테스트 학생 제외)과, 그 학생 기준 전체 마감
+function lastIn() {
+  const m = meta(); let last = null, end = 0;
+  for (const [sid, a] of Object.entries(P.answers)) {
+    if (!a || !a.startedAt || isTest(sid)) continue;
+    if (!last || a.startedAt > last.at) last = { sid, at: a.startedAt };
+    end = Math.max(end, dlOf(m, a));
+  }
+  return last ? { ...last, name: (whoOf(last.sid) || {}).name || last.sid, end } : null;
+}
 function paintClock() {
   if (!P) return; const m = meta(), el = $('pclock'), now = be.now();
-  const left = m.status === 'running' ? m.endAt - now : 0;
-  if (el) el.textContent = m.status === 'running' ? (left > 0 ? C.fmtClock(left) : '종료하는 중…') : '--:--';
+  const left = m.status === 'running' ? m.endAt - now : 0, bl = m.status === 'running' ? baseEnd(m) - now : 0;
+  if (el) el.textContent = m.status === 'running' ? (bl > 0 ? C.fmtClock(bl) : left > 0 ? '끝' : '종료하는 중…') : '--:--';
+  const tm = $('ptimes');
+  if (tm) { const li = m.status === 'running' ? lastIn() : null; tm.innerHTML = m.status !== 'running' ? '' : `시작 <b>${hhmmss(m.startAt)}</b> · 기본 종료 <b>${hhmmss(baseEnd(m))}</b>${li ? ` <span class="dim">· 전체 마감 ${hhmmss(li.end)} (${esc(li.name)} ${hhmmss(li.at)} 입장)</span>` : ''}`; }
+  if (m.status === 'running' && bl <= 0 && bl > -60000) bell(m);
   // 학생마다 남은 시간
   document.querySelectorAll('[data-dl]').forEach(td => { const d = +td.dataset.dl - now; td.textContent = m.status !== 'running' ? '' : d > 0 ? C.fmtClock(d) : '시간 끝'; });
   paintBand();
@@ -218,6 +233,33 @@ function paintClock() {
   if (m.status === 'running' && left < -8000 && !P.closing) { P.closing = true; setMeta({ status: 'ended' }).catch(() => {}).then(() => { if (P) P.closing = false; }); }
 }
 // 시험 중에는 어느 탭에서든 맨 위에 진행 상황을 보여 줍니다. 누르면 진행 탭으로 갑니다.
+// 기본 종료 종소리(교수 화면에서만). 같은 시험·같은 종료 시각에는 한 번만 울립니다.
+let audio = null;
+document.addEventListener('pointerdown', () => { try { if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === 'suspended') audio.resume(); } catch (e) {} }, true);
+function chime() {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = audio.currentTime + 0.05;
+    [[659.25, 0], [523.25, 0.55], [783.99, 1.1], [1046.5, 1.65]].forEach(([f, d]) => {
+      [[1, 0.32], [2.76, 0.07], [5.4, 0.03]].forEach(([h, vol]) => {   // 종처럼 들리게 배음을 섞음
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.type = 'sine'; o.frequency.value = f * h; o.connect(g); g.connect(audio.destination);
+        g.gain.setValueAtTime(0.0001, t0 + d); g.gain.exponentialRampToValueAtTime(vol, t0 + d + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 2.4);
+        o.start(t0 + d); o.stop(t0 + d + 2.5);
+      });
+    });
+  } catch (e) {}
+}
+function bell(m) {
+  const k = `bell:${P.id}:${baseEnd(m)}`;
+  try { if (localStorage.getItem(k)) return; localStorage.setItem(k, '1'); } catch (e) { if (P.belled === k) return; P.belled = k; }
+  chime();
+  const li = lastIn(), late = li && li.end > baseEnd(m) + 1000;
+  const box = $('bellbox'); if (!box) return;
+  box.innerHTML = `<div class="bellcard"><div class="bellico">🔔</div><h2>시험 시간이 끝났습니다</h2><div class="sm">${late ? `늦게 들어온 학생은 각자 시간이 끝날 때까지 계속 풉니다.<br><span class="dim">전체 마감 ${hhmmss(li.end)}</span>` : '학생들의 답안이 자동으로 제출됩니다.'}</div><button class="btn s" data-a="bell-close">닫기</button></div>`;
+  box.hidden = false; clearTimeout(P.bellT); P.bellT = setTimeout(() => { box.hidden = true; }, 15000);
+}
+on('bell-close', () => { const b = $('bellbox'); if (b) b.hidden = true; });
 function liveCounts() {
   const { sheet, key } = exam(), rows = Object.entries(P.answers).filter(([sid, a]) => a && a.startedAt && !isTest(sid));   // 테스트 학생은 세지 않음
   const tot = rows.map(([sid, a]) => C.scoreStudent(sheet, key, a.a, P.essay[sid]).total);
@@ -229,7 +271,8 @@ function paintBand() {
   if (m.status !== 'running') { el.hidden = true; return; }
   const c = liveCounts(), left = m.endAt - be.now();
   el.hidden = false;
-  el.innerHTML = `<b>시험 중</b><span>전체 마감까지 ${left > 0 ? C.fmtClock(left) : '종료하는 중…'}</span><span>응시 중 ${c.go}명</span><span>제출 ${c.sub}명</span><span>이탈 ${c.lv}명</span>${c.locked ? `<span class="alarm">잠긴 학생 ${c.locked}명 — 확인 필요</span>` : ''}<span>평균 ${c.avg.toFixed(1)} / ${c.max}점 <small>(자동 채점 기준)</small></span>${P.tab === 'run' ? '' : '<span class="go">진행 탭으로 →</span>'}`;
+  const bl = baseEnd(m) - be.now(), li = lastIn();
+  el.innerHTML = `<b>시험 중</b><span>${bl > 0 ? `기본 종료까지 ${C.fmtClock(bl)}` : left > 0 ? `기본 시간 끝${li ? ` <i class="dim">· 전체 마감 ${hhmmss(li.end)}</i>` : ''}` : '종료하는 중…'}</span><span>응시 중 ${c.go}명</span><span>제출 ${c.sub}명</span><span>이탈 ${c.lv}명</span>${c.locked ? `<span class="alarm">잠긴 학생 ${c.locked}명 — 확인 필요</span>` : ''}<span>평균 ${c.avg.toFixed(1)} / ${c.max}점 <small>(자동 채점 기준)</small></span>${P.tab === 'run' ? '' : '<span class="go">진행 탭으로 →</span>'}`;
 }
 const exam = () => C.splitExam(P.pages);
 const clsFilter = () => `<div class="tabs">${[['', '전체'], ...allClasses().map(c => [c, c])].map(([c, n]) => `<button data-a="p-cls" data-c="${esc(c)}" class="${P.cls === c ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>`;
@@ -278,10 +321,11 @@ function tabRun() {
     running: `<button class="btn s gh" data-a="ex-extend">시간 5분 연장</button><button class="btn s red" data-a="ex-end">시험 종료 (모든 반 함께)</button>`,
     ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '<button class="btn s gh" data-a="ex-reopen">못 본 학생 열기 (결과 공개 취소 후)</button>' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (못 본 학생 응시)</button>'}`,
   }[m.status || 'draft'];
-  const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 학생의 "시험 시작" 버튼이 켜지고, 학생이 그 버튼을 누른 때부터 각자 시간이 흐릅니다.', running: `${hhmmss(m.startAt)}에 열림 · 학생마다 "시험 시작"을 누른 때부터 ${m.minutes}분 · 전체 마감 ${hhmmss(m.endAt)}. 각자 시간이 끝나면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 장문형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
+  const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 학생의 "시험 시작" 버튼이 켜지고, 학생이 그 버튼을 누른 때부터 각자 시간이 흐릅니다. 늦게 온 학생은 목록에서 시험을 누른 때부터 흐릅니다.', running: `대기실 학생은 "시험 시작"을 누른 때부터, 늦게 온 학생은 시험을 누른 때부터 각자 ${m.minutes}분. ${hhmmss(m.endAt - m.minutes * 60000 - (m.extra || 0))}까지 들어오면 시간을 다 받습니다. 각자 시간이 끝나면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 장문형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
   const scores = real.filter(r => r.a && r.a.startedAt).map(r => C.scoreStudent(sheet, key, r.a.a, P.essay[r.sid]).total);
   $('pmain').innerHTML = `
-    <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="sm">전체 마감까지</span><span class="pill blue" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
+    <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="sm">기본 종료까지</span><span class="pill blue" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
+      <div class="sm" id="ptimes"></div>
       <div class="sm">${esc(guide)}</div>
       ${v.errors.length ? `<div class="box no">문항에 고칠 곳이 ${v.errors.length}군데 있어요. <b>문항</b> 탭에서 확인해 주세요.</div>` : ''}
       <div class="row">${btns}<button class="btn s gh" data-a="ex-settings">시험 설정</button><button class="btn s gh" data-a="ex-copy">시험 복사 (재시험용)</button></div>
@@ -312,7 +356,7 @@ on('ex-start', async () => {
   const m = meta();
   if (C.validateBundle(P.pages).errors.length) return toast('문항에 고칠 곳이 있어요.');
   const late = m.late >= 0 ? m.late : LATE;
-  if (!(await confirmBox('시험을 시작할까요?', `학생이 <b>시험 시작</b>을 누른 때부터 각자 <b>${m.minutes}분</b>이 흐릅니다.\n전체 마감은 지금부터 <b>${m.minutes + late}분</b> 뒤입니다(시험 시간 ${m.minutes}분 + 늦게 시작해도 되는 ${late}분). 그때는 모두 끝납니다.`, '시작'))) return;
+  if (!(await confirmBox('시험을 시작할까요?', `대기실 학생은 <b>시험 시작</b>을 누른 때부터, 늦게 온 학생은 목록에서 <b>시험을 누른 때</b>부터 각자 <b>${m.minutes}분</b>이 흐릅니다.\n<b>${m.minutes}분</b> 뒤(기본 종료)에 이 화면에서 종이 울립니다.\n늦게 온 학생은 <b>${late}분</b> 안에 들어와야 시간을 다 받습니다(시험 설정에서 바꿀 수 있음). 지금부터 <b>${m.minutes + late}분</b> 뒤에는 모두 끝납니다.`, '시작'))) return;
   const now = be.now(); await setMeta({ status: 'running', practice: false, startAt: now, extra: 0, endAt: now + (m.minutes + late) * 60000 });
 });
 on('ex-extend', async () => { const m = meta(); await setMeta({ extra: (m.extra || 0) + 5 * 60000, endAt: m.endAt + 5 * 60000 }); toast('모든 학생의 시간을 5분 연장했어요.'); });
