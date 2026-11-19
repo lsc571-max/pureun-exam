@@ -137,7 +137,7 @@ test('문제지: 시험을 시작한 학생만 받는다', async () => {
   await assertFails(stu('u1').ref('sheets/done').get());              // 응시하지 않은 끝난 시험
   await seed({ [`answers/open/${A}/startedAt`]: Date.now() - 5000000 });
   await assertSucceeds(stu('u1').ref('sheets/open').get());           // 응시했던 시험은 결과 볼 때 다시 받음
-  await assertSucceeds(stu('u1').ref('sheets/prac').get());           // 문제풀이
+  await assertFails(stu('u1').ref('sheets/prac').get());              // 문제풀이 공개는 없앰
   await assertFails(stu('u1').ref('sheets/run').set({ data: 'x' }));
 });
 
@@ -148,8 +148,10 @@ test('정답지: 결과 공개 전에는 학생 기기로 내려가지 않는다
   await assertFails(stu('u1').ref('keys/done').get());  // 끝났지만 공개 전
   await assertFails(stu('u1').ref('keys/wait').get());
   await assertFails(stu('u1').ref('keys').get());
-  await assertSucceeds(stu('u1').ref('keys/open').get()); // 공개 후
-  await assertSucceeds(stu('u1').ref('keys/prac').get()); // 문제풀이
+  await assertFails(stu('u1').ref('keys/open').get());    // 공개됐어도 시험을 보지 않은 학생은 못 봄
+  await seed({ [`answers/open/${A}/startedAt`]: Date.now() - 5000000 });
+  await assertSucceeds(stu('u1').ref('keys/open').get()); // 응시한 학생은 공개 후 봄
+  await assertFails(stu('u1').ref('keys/prac').get());    // 문제풀이 공개는 없앰
   await assertFails(stu('ghost').ref('keys/open').get());
   await assertFails(stu('u1').ref('keys/open').set({ data: 'x' }));
 });

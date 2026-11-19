@@ -3,7 +3,7 @@ import * as C from './core.js';
 import { S, be, parse } from './state.js';
 import { media, typeChip, answerHtml } from './view.js';
 import { hideToast } from './ui.js';
-import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, CIRCLED, errText, hhmmss, download, copyText, shrinkImage } from './ui.js';
+import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, CIRCLED, errText, hhmmss, download, copyText, shrinkImage, countdown } from './ui.js';
 
 const app = $('app');
 let bind = {}, users = {}, entry = {}, P = null, clockT = 0, liveT = 0, baseSubs = [];
@@ -48,7 +48,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); histRedo(); }
 });
 const ST = { draft: ['', '준비 중'], open: ['mid', '대기실 열림'], running: ['ok', '진행 중'], ended: ['', '종료'] };
-const pill = m => { const s = ST[m.status] || ST.draft; return `<span class="pill ${s[0]}">${s[1]}</span>${m.released ? ' <span class="pill blue">결과 공개</span>' : ''}${m.practice ? ' <span class="pill blue">문제풀이 공개</span>' : ''}`; };
+const pill = m => { const s = ST[m.status] || ST.draft; return `<span class="pill ${s[0]}">${s[1]}</span>${m.released ? ' <span class="pill blue">결과 공개</span>' : ''}`; };
 const meta = () => S.exams[P.id] || {};
 // 안내 쪽과 마무리 쪽은 앱이 자동으로 만듭니다. 문항 목록에는 문제만 둡니다.
 const questionsOnly = pages => pages.filter(p => p.t !== 'intro' && p.t !== 'end');
@@ -60,7 +60,6 @@ const isTest = sid => /^TEST/.test(String(sid || ''));
 const testPill = sid => (isTest(sid) ? ' <span class="pill blue">테스트</span>' : '');
 // 이름·반: 지금 입장해 있으면 입장 기록에서, 입장이 취소됐으면 시험을 시작할 때 답안에 적어 둔 것에서
 const whoOf = sid => people()[sid] || (P && P.answers[sid] && P.answers[sid].who) || null;
-const LATE = 30;   // 늦게 시작해도 되는 시간(분)의 기본값
 // 학생별 마감 시각: 따로 준 시각이 있으면 그 시각, 없으면 시작한 때 + 시험 시간(+연장). 전체 마감은 넘지 않음
 // 실제로 시험을 시작한 학생(시험 화면까지 들어감). 늦게 와서 시험을 누르기만 한 학생은 startedAt 만 있고 sess 가 없습니다(시간은 흐름).
 const began = a => !!a && !!a.startedAt && !!a.sess;
@@ -337,10 +336,10 @@ function tabRun() {
   const btns = {
     draft: `<button class="btn s am" data-a="ex-status" data-s="open">학생에게 열기 (대기실)</button>`,
     open: `<button class="btn s am" data-a="ex-start">시험 시작 (모든 반 함께)</button><button class="btn s gh" data-a="ex-status" data-s="draft">대기실 닫기</button>`,
-    running: `<button class="btn s gh" data-a="ex-extend">시간 5분 연장</button><button class="btn s red" data-a="ex-end">시험 종료 (모든 반 함께)</button>`,
+    running: `<button class="btn s gh" data-a="ex-extend">시간 5분 연장</button><button class="btn s red" data-a="ex-end">강제 종료 (모든 학생)</button>`,
     ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '<button class="btn s gh" data-a="ex-reopen">못 본 학생 열기 (결과 공개 취소 후)</button>' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (못 본 학생 응시)</button>'}`,
   }[m.status || 'draft'];
-  const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 기다리고 있습니다. 시작을 누르면 학생의 "시험 시작" 버튼이 켜지고, 학생이 그 버튼을 누른 때부터 각자 시간이 흐릅니다. 늦게 온 학생은 목록에서 시험을 누른 때부터 흐릅니다.', running: `대기실 학생은 "시험 시작"을 누른 때부터, 늦게 온 학생은 시험을 누른 때부터 각자 ${m.minutes}분. ${hhmmss(m.endAt - m.minutes * 60000 - (m.extra || 0))}까지 들어오면 시간을 다 받습니다. 각자 시간이 끝나면 자동으로 제출됩니다.`, ended: '시험이 끝났습니다. 장문형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
+  const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 안내를 확인하고 기다리고 있습니다. 시작을 누르면 5 · 4 · 3 · 2 · 1 뒤 기다리던 학생이 모두 함께 시작합니다.', running: `대기실 학생은 교수님이 시작할 때 함께, 늦게 온 학생은 "시험 시작"을 누른 때부터 각자 ${m.minutes}분. 각자 시간이 끝나면 자동으로 제출됩니다. 모두 끝내려면 강제 종료를 누르세요.`, ended: '시험이 끝났습니다. 장문형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
   const scores = real.filter(r => began(r.a)).map(r => C.scoreStudent(sheet, key, r.a.a, P.essay[r.sid]).total);
   $('pmain').innerHTML = `
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="sm">기본 종료까지</span><span class="pill blue" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
@@ -374,13 +373,15 @@ on('ex-status', async el => {
 on('ex-start', async () => {
   const m = meta();
   if (C.validateBundle(P.pages).errors.length) return toast('문항에 고칠 곳이 있어요.');
-  const late = m.late >= 0 ? m.late : LATE;
-  if (!(await confirmBox('시험을 시작할까요?', `대기실 학생은 <b>시험 시작</b>을 누른 때부터, 늦게 온 학생은 목록에서 <b>시험을 누른 때</b>부터 각자 <b>${m.minutes}분</b>이 흐릅니다.\n<b>${m.minutes}분</b> 뒤(기본 종료)에 이 화면에서 종이 울립니다.\n늦게 온 학생은 <b>${late}분</b> 안에 들어와야 시간을 다 받습니다(시험 설정에서 바꿀 수 있음). 지금부터 <b>${m.minutes + late}분</b> 뒤에는 모두 끝납니다.`, '시작'))) return;
-  const now = be.now(); await setMeta({ status: 'running', practice: false, startAt: now, extra: 0, endAt: now + (m.minutes + late) * 60000 });
+  if (!(await confirmBox('시험을 시작할까요?', `5 · 4 · 3 · 2 · 1 뒤에 시작합니다.\n대기실에서 기다리던 학생은 <b>모두 함께</b> 시작하고, 늦게 온 학생은 <b>시험 시작</b>을 누른 때부터, 각자 <b>${m.minutes}분</b>이 흐릅니다. 학생마다 자기 시간이 끝나면 자동으로 제출됩니다.\n<b>${m.minutes}분</b> 뒤(기본 종료)에 이 화면에서 종이 울립니다. 모두 끝내려면 <b>강제 종료</b>를 누르세요.`, '시작'))) return;
+  await countdown(5);
+  // 전체 마감은 두지 않습니다(학생마다 자기 시간). endAt 은 하루 뒤로 두어 서버 규칙의 안전장치로만 씁니다.
+  const now = be.now(); await setMeta({ status: 'running', practice: false, startAt: now, extra: 0, endAt: now + 24 * 3600000 });
 });
 on('ex-extend', async () => { const m = meta(); await setMeta({ extra: (m.extra || 0) + 5 * 60000, endAt: m.endAt + 5 * 60000 }); toast('모든 학생의 시간을 5분 연장했어요.'); });
 on('ex-end', async () => {
-  if (!(await confirmBox('시험을 종료할까요?', '모든 학생의 시험이 바로 끝나고, 지금까지 저장된 답안으로 채점됩니다.', '종료', { danger: true }))) return;
+  const going = Object.entries(P.answers).filter(([sid, a]) => began(a) && !a.submittedAt && !isTest(sid) && dlOf(meta(), a) > be.now()).length;
+  if (!(await confirmBox('정말 강제 종료할까요?', `${going ? `<b>아직 푸는 학생 ${going}명</b>(늦게 들어온 학생 포함)도 ` : ''}모든 학생의 시험이 바로 끝나고, 지금까지 저장된 답안으로 채점됩니다.`, '강제 종료', { danger: true }))) return;
   await setMeta({ endAt: Math.min(meta().endAt, be.now()) });   // 남은 시간을 0으로 → 학생 답안이 자동 제출되고, 잠시 뒤 시험이 닫힙니다
   toast('종료하는 중입니다. 학생들의 마지막 답안을 받고 있어요.', 6000);
 });
@@ -419,7 +420,7 @@ on('ex-copy', async () => {
   const src = P.id, id = 'e' + Date.now().toString(36), at = be.now();
   const [draft, sheet, key, imgs] = await Promise.all(['drafts/', 'sheets/', 'keys/', 'images/'].map(k => be.get(k + src)));
   const u = { ['exams/' + id]: { title: (m.title || '시험') + ' (재시험)', minutes: m.minutes || 50, status: 'draft', released: false, practice: false, n: m.n || 0, total: m.total || 0, notice: m.notice || null, end: m.end || null, at } };
-  for (const k of ['late', 'cam', 'appOnly', 'camBatt', 'camLock', 'camYaw', 'camPitch', 'camSec', 'leaveLock']) if (m[k] !== undefined) u['exams/' + id][k] = m[k];   // 시험 설정도 그대로
+  for (const k of ['cam', 'appOnly', 'camBatt', 'camLock', 'camYaw', 'camPitch', 'camSec', 'leaveLock']) if (m[k] !== undefined) u['exams/' + id][k] = m[k];   // 시험 설정도 그대로
   if (draft) u['drafts/' + id] = { ...draft, at };
   if (sheet) u['sheets/' + id] = { ...sheet, at };
   if (key) u['keys/' + id] = { ...key, at };
@@ -455,7 +456,6 @@ on('ex-settings', () => {
   modal(`<h2>시험 설정</h2>
     <label class="f">시험 이름<input class="in" id="s-title" value="${esc(m.title || '')}" maxlength="60"></label>
     <label class="f">시험 시간(분) ${m.status === 'running' ? '— 진행 중에는 "5분 연장"을 쓰세요' : ''}<input class="in" id="s-min" type="number" min="1" max="300" value="${m.minutes || 50}" ${m.status === 'running' ? 'disabled' : ''}></label>
-    <label class="f">늦게 시작해도 되는 시간(분) — 전체 마감 = 시험 시간 + 이 시간<input class="in" id="s-late" type="number" min="0" max="300" value="${m.late >= 0 ? m.late : LATE}" ${m.status === 'running' ? 'disabled' : ''}></label>
     <label class="f">안내 쪽에 덧붙일 말 (선택)<textarea class="in" id="s-notice" rows="2" maxlength="500" placeholder="예: 계산기는 쓸 수 없습니다.">${esc((m.notice || {}).body || '')}</textarea></label>
     <label class="f">마무리 쪽에 보일 말 (선택)<textarea class="in" id="s-end" rows="2" maxlength="500" placeholder="예: 결과는 다음 주 수업 시간에 공개합니다.">${esc((m.end || {}).body || '')}</textarea></label>
     <button class="check ${C.camOn(m) ? 'on' : ''}" data-a="s-practice" id="s-cam"><i>✓</i>전면 카메라로 얼굴 확인</button>
@@ -480,11 +480,10 @@ on('s-practice', el => el.classList.toggle('on'));
 on('s-save', async () => {
   const title = $('s-title').value.trim(), minutes = Math.round(+$('s-min').value), appOnly = $('s-app').classList.contains('on'), cam = $('s-cam').classList.contains('on'), camBatt = Math.max(0, Math.min(100, Math.round(+$('s-batt').value || 0))), camLock = Math.max(0, Math.min(20, Math.round(+$('s-camlock').value || 0))),
     camYaw = Math.max(5, Math.min(90, Math.round(+$('s-camyaw').value || C.CAM_DEF.camYaw))), camPitch = Math.max(5, Math.min(90, Math.round(+$('s-campitch').value || C.CAM_DEF.camPitch))), camSec = Math.max(1, Math.min(60, Math.round(+$('s-camsec').value || C.CAM_DEF.camSec))), leaveLock = Math.max(0, Math.min(20, Math.round(+$('s-leavelock').value || 0)));
-  const late = Math.round(+$('s-late').value);
   const noticeBody = $('s-notice').value.trim(), endBody = $('s-end').value.trim();   // 확인 창이 뜨면 이 칸들이 사라지므로 미리 읽어 둡니다
-  if (!title || !(minutes >= 1 && minutes <= 300) || !(late >= 0 && late <= 300)) return toast('이름과 시간을 확인해 주세요.');
+  if (!title || !(minutes >= 1 && minutes <= 300)) return toast('이름과 시간을 확인해 주세요.');
   // 문제풀이(학습) 공개는 설정에서 뺐습니다(시험이 끝난 뒤 "결과 공개"로 해설을 봅니다). 예전에 켜 둔 것이 있으면 저장할 때 끕니다.
-  await setMeta({ title, minutes, late, practice: false, appOnly, cam, camBatt, camLock, camYaw, camPitch, camSec, leaveLock, notice: { title: '', body: noticeBody }, end: { title: '고생하셨습니다', body: endBody } }); closeModal(); toast('저장했어요.');
+  await setMeta({ title, minutes, practice: false, appOnly, cam, camBatt, camLock, camYaw, camPitch, camSec, leaveLock, notice: { title: '', body: noticeBody }, end: { title: '고생하셨습니다', body: endBody } }); closeModal(); toast('저장했어요.');
 });
 on('ex-wipe', async () => {
   if (!(await confirmBox('답안을 모두 지울까요?', '이 시험의 모든 학생 답안, 이탈 기록, 장문형 점수가 지워지고 시험이 "준비 중"으로 돌아갑니다. <b>되돌릴 수 없습니다.</b>', '모두 지우기', { danger: true }))) return;

@@ -39,6 +39,7 @@ let step = '';
 const watchdog = setTimeout(() => { console.error(`\n시간 초과 — 멈춘 단계: ${step}`); process.exit(1); }, 420000);
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 412, height: 860 } });
+await ctx.addInitScript(() => { window.__cdMs = 80; });   // 5·4·3·2·1 을 테스트에서는 빠르게
 const errors = [];
 const watch = (pg, name) => { pg.on('pageerror', e => errors.push(`${name}: ${e.message}`)); pg.on('console', m => { if (m.type() === 'error' && !/fonts\.g|Failed to load resource/.test(m.text())) errors.push(`${name}: ${m.text()}`); }); };
 const shot = async (pg, name) => { if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, name + '.png') }); };
@@ -352,14 +353,14 @@ try {
   assert.ok(await stu.isDisabled('[data-a="start"]'), '교수가 시작하기 전인데 버튼이 켜짐');
   await shot(stu, 's2-notice');
 
-  say('교수가 시작하면 버튼이 켜진다');
+  say('대기실에서 확인을 마치고 기다리면, 교수가 시작할 때 5·4·3·2·1 뒤 모두 함께 시작된다');
+  assert.match(await stu.textContent('[data-a="start"]'), /교수님이 시작하면/);
   await act(prof, 'ex-start'); await act(prof, 'dlg-yes');
-  await stu.waitForFunction(() => !document.querySelector('[data-a="start"]').disabled);
-  await stu.reload(); await stu.waitForSelector('[data-a="open-exam"]');   // 새로 고쳐도 입장 정보가 남는다
-  await act(stu, 'open-exam'); await stu.waitForSelector('[data-a="start"]');
-  assert.ok(await stu.isDisabled('[data-a="start"]'), '"확인했습니다"를 안 눌렀는데 켜짐');
-  await act(stu, 'agree'); await act(stu, 'start');
+  await prof.waitForSelector('.cdown');                       // 교수 화면에도 5·4·3·2·1
+  await stu.waitForSelector('.cdown');
   await stu.waitForSelector('#clock');
+  await prof.waitForSelector('[data-a="ex-end"]');
+  assert.match(await prof.textContent('[data-a="ex-end"]'), /강제 종료/);
 
   /* ---------- 학생: 시험 ---------- */
   say('문제 풀기: 객관식 · 드롭다운 · 체크박스 · 단답형 · 장문형');
@@ -476,11 +477,9 @@ try {
   await act(stu2, 'cls', '[data-c="B반"]'); await stu2.fill('#e-sid', '20261301'); await stu2.fill('#e-name', '김철수'); await act(stu2, 'enter');
   await stu2.waitForSelector('[data-a="open-exam"]'); await act(stu2, 'open-exam');
   await stu2.waitForSelector('[data-a="agree"]');
-  // 시험이 이미 진행 중이면 시험을 누른 때부터 시간이 흐른다(안내 화면도 포함)
-  assert.ok((await db(prof)).answers[exId]['20261301'].startedAt > 0, '늦게 온 학생의 시간이 시험을 눌렀을 때 시작되지 않음');
-  assert.match(await stu2.textContent('#nleft'), /^(05:00|04:5\d)$/);
-  await prof.waitForFunction(() => /김철수.*안내 보는 중/s.test(document.getElementById('pmain').textContent));   // 아직 응시 중으로 세지 않음
+  assert.ok(!((await db(prof)).answers[exId] || {})['20261301'], '안내 화면에서 벌써 시간이 흐름');   // 확인을 마치고 시작을 눌러야 시간이 흐른다
   await act(stu2, 'agree'); await act(stu2, 'start');
+  await stu2.waitForSelector('.cdown');
   await stu2.waitForSelector('#clock');
   // 교수가 시작을 누른 지 한참 뒤에 시작했어도, 이 학생의 5분은 지금부터 흐른다
   assert.match(await stu2.textContent('#clock'), /^(05:00|04:5\d)$/, '늦게 시작한 학생이 시험 시간을 온전히 받지 못함');
@@ -736,31 +735,22 @@ try {
   assert.match(await stu.textContent('#app'), /받은 점수 7 \/ 10점/);
   await act(stu, 'rv-top'); await act(stu, 'rv-all');
   for (let i = 0; i < 3; i++) await act(stu, 'rv-next');
+  assert.equal(await stu.locator('.foot [data-a="home"]').count(), 1, '해설 화면에 나가기가 없음');
+  assert.equal(await stu.locator('.rvtabs [data-a="rv-wrong"]').count(), 1, '해설 화면 위에 틀린 문항만 탭이 없음');
   const shortPage = await stu.textContent('#app');
   assert.match(shortPage, /넷째 문제/); assert.match(shortPage, /내 답 — 정답/); assert.match(shortPage, /사출금형/);
 
-  say('문제풀이 모드: 순서대로, 해설 바로 확인');
-  // (설정 창에서는 뺐지만, 예전에 켜 둔 시험을 위해 학생 쪽 기능은 남아 있음)
+  say('시험을 보지 않은 학생은 결과가 공개돼도 "미응시"이고 문제를 볼 수 없다');
   await act(prof, 'p-tab', '[data-t="run"]');
-  await prof.evaluate(id => import('./state.js').then(m => m.be.update('exams/' + id, { practice: true })), exId);
-  await act(stu, 'rv-top'); await act(stu, 'home');
-  await stu.waitForSelector('[data-a="open-practice"]'); await act(stu, 'open-practice');
-  await stu.waitForSelector('[data-a="pr-pick"]');
-  assert.equal(await qText(stu), '첫째 문제', '문제풀이는 섞지 않음');
-  assert.deepEqual(await stu.locator('.opt span:nth-child(2)').allTextContents(), ['가1', '나1', '다1', '라1']);
-  assert.ok(!/비밀해설1/.test(await stu.textContent('#app')), '풀기 전인데 해설이 보임');
-  await stu.locator('.opt', { hasText: '나1' }).click();
-  await stu.waitForSelector('.opt.right');
-  assert.match(await stu.textContent('#app'), /비밀해설1/);
-  await shot(stu, 's10-practice');
-  await act(stu, 'rv-next'); await act(stu, 'rv-next');   // 셋째(체크박스): 고르고 "정답 확인"
-  await stu.locator('.opt', { hasText: '가3' }).click(); await stu.locator('.opt', { hasText: '라3' }).click();
-  assert.ok(!/비밀해설3/.test(await stu.textContent('#app')), '확인 전인데 해설이 보임');
-  await act(stu, 'pr-show');
-  assert.equal(await stu.locator('.opt.right').count(), 2); assert.equal(await stu.locator('.opt.wrong').count(), 0);
-  await act(stu, 'rv-next');                               // 넷째(단답형)
-  await stu.fill('#pr-text', '사출 금형'); await act(stu, 'pr-show');
-  assert.match(await stu.textContent('#app'), /내 답 — 정답/);
+  await act(stu, 'home');
+  const nob = await ctx.newPage(); watch(nob, '미응시 학생');
+  await enter(nob, 'B반', '20261999', '안본학생');
+  await nob.waitForFunction(() => /미응시/.test(document.body.textContent));
+  await act(nob, 'open-exam');
+  await nob.waitForFunction(() => /이 시험을 보지 않아 결과가 없습니다/.test(document.body.textContent));
+  assert.ok(!/첫째 문제|비밀해설/.test(await nob.textContent('#app')), '안 본 학생에게 문제가 보임');
+  assert.equal(await nob.locator('[data-a="open-practice"]').count(), 0);
+  await nob.close();
 
   say('시험 복사: 문항만 복사되고 답안은 복사되지 않는다');
   await act(prof, 'ex-copy'); await act(prof, 'dlg-yes');

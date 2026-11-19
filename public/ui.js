@@ -83,3 +83,20 @@ export function shrinkImage(file, max = 1280, q = 0.82) {
     img.src = url;
   });
 }
+
+/* 5 · 4 · 3 · 2 · 1 — 화면 가운데에 크게, 연하게 보여 준 뒤 끝나면 이어서 진행합니다 */
+export function countdown(n = 5) {
+  const step = window.__cdMs || 1000;   // (자동 테스트에서는 짧게)
+  return new Promise(done => {
+    const el = document.createElement('div'); el.className = 'cdown'; el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+    let i = n;
+    const show = () => { el.innerHTML = `<div><span class="num">${i}</span><span class="lbl">곧 시작합니다</span></div>`; };
+    show();
+    const t = setInterval(() => {
+      if (--i > 0) return show();
+      clearInterval(t); el.classList.add('out');
+      setTimeout(() => { el.remove(); done(); }, 260);
+    }, step);
+  });
+}

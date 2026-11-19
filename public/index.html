@@ -218,6 +218,16 @@ td.pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:260px}
 .desk header .undoredo button:disabled{opacity:.35}
 /* 테스트 학생 화면 띠 */
 .codepill{font-size:16px;padding:3px 12px;cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+.cdown{position:fixed;inset:0;z-index:85;display:flex;align-items:center;justify-content:center;background:rgba(246,250,248,.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);animation:fadeIn .2s ease-out}
+.cdown>div{display:flex;flex-direction:column;align-items:center;gap:6px}
+.cdown .num{font-size:min(38vw,190px);font-weight:800;line-height:1;color:var(--pri);opacity:.82;animation:cdpop .9s ease-out both;font-variant-numeric:tabular-nums}
+.cdown .lbl{font-size:16px;font-weight:600;color:var(--muted);letter-spacing:.02em}
+.cdown.out{opacity:0;transition:opacity .25s}
+@keyframes cdpop{0%{transform:scale(1.25);opacity:0}25%{opacity:.82}100%{transform:scale(1);opacity:.82}}
+.rvtabs{flex:none;display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--card)}
+.rvtabs button{flex:1;padding:8px 10px;border-radius:10px;background:var(--soft);font-weight:700;font-size:14px;color:var(--muted)}
+.rvtabs button.on{background:var(--blue-soft);color:var(--blue)}
+.rvtabs button:disabled{opacity:.45}
 .dim{color:#9aa3ae;font-weight:400;font-style:normal}
 #bellbox{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(40,60,90,.18);z-index:60}#bellbox[hidden]{display:none}
 .bellcard{background:#fff;border-radius:22px;padding:26px 34px;text-align:center;box-shadow:0 18px 50px rgba(40,70,120,.25);display:flex;flex-direction:column;gap:10px;align-items:center;animation:bellin .35s ease-out}

@@ -4,7 +4,7 @@ import { createAnswerStore } from './save.js';
 import { S, be, setBackend, APP, parse } from './state.js';
 import { media, typeChip, answerHtml } from './view.js';
 import { testCamera, startWatch } from './face.js';
-import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, closeZoom, CIRCLED, errText, hhmmss } from './ui.js';
+import { $, esc, on, toast, modal, closeModal, confirmBox, zoom, closeZoom, CIRCLED, errText, hhmmss, countdown } from './ui.js';
 
 const CONFIG = {
   apiKey: 'AIzaSyBDVS-cdDMhjVpRk8ipoYG79DrTvatKsLQ',
@@ -178,17 +178,18 @@ function onExams() {
 const isOver = m => m.status === 'ended' || (m.status === 'running' && be.now() >= m.endAt);
 // 학생마다 "시험 시작"을 누른 때부터 시험 시간이 흐릅니다. 전체 마감(endAt)을 넘길 수는 없습니다.
 const deadline = (m, startedAt, until) => Math.min(m.endAt, until || (startedAt + m.minutes * 60000 + (m.extra || 0)));
-const pracOpen = m => !!m.practice && (m.status === 'draft' || m.status === 'ended');
 function viewHome() {
-  view = 'home';
-  const list = Object.entries(S.exams).filter(([, m]) => m && (['open', 'running', 'ended'].includes(m.status) || pracOpen(m))).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+  view = 'home'; exitFull();
+  try { if (APP && APP.fullscreen) APP.fullscreen(false); } catch (e) {}
+  const list = Object.entries(S.exams).filter(([, m]) => m && ['open', 'running', 'ended'].includes(m.status)).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+  // 끝난 시험은 내가 봤는지 확인해서, 보지 않았으면 "미응시"로 보여 줍니다
+  const ask = list.filter(([id, m]) => isOver(m) && S.took[id] === undefined);
+  if (ask.length) Promise.all(ask.map(([id]) => be.get(`answers/${id}/${S.me.sid}/startedAt`).then(v => { S.took[id] = !!v; }, () => {}))).then(() => { if (view === 'home') viewHome(); });
   const card = ([id, m]) => {
-    const exam = m.status !== 'draft';
-    const over = isOver(m);
-    const st = over ? ['end', m.released ? '결과 공개' : '종료'] : ({ open: ['wait', '곧 시작'], running: ['run', '진행 중'] }[m.status] || ['', '문제풀이']);
-    const hint = m.status === 'open' ? '눌러서 대기실에 들어가세요' : !over && m.status === 'running' ? '눌러서 응시하세요' : over ? (m.released ? '눌러서 내 점수와 해설을 보세요' : '결과는 교수님이 공개하면 볼 수 있어요') : '';
-    return `${exam ? `<button class="card" data-a="open-exam" data-id="${esc(id)}"><span class="st ${st[0]}">${st[1]}</span><h3>${esc(m.title || '시험')}</h3><div class="sm">${m.n || 0}문항 · ${m.minutes || 0}분 · ${hint}</div></button>` : ''}
-      ${pracOpen(m) ? `<button class="card" data-a="open-practice" data-id="${esc(id)}"><span class="st">문제풀이</span><h3>${esc(m.title || '문제풀이')}</h3><div class="sm">${m.n || 0}문항 · 순서대로 풀고 해설을 바로 확인</div></button>` : ''}`;
+    const over = isOver(m), missed = over && S.took[id] === false;
+    const st = missed ? ['end', '미응시'] : over ? ['end', m.released ? '결과 공개' : '종료'] : ({ open: ['wait', '곧 시작'], running: ['run', '진행 중'] }[m.status] || ['', '']);
+    const hint = missed ? '이 시험을 보지 않았어요' : m.status === 'open' ? '눌러서 대기실에 들어가세요' : !over && m.status === 'running' ? '눌러서 응시하세요' : over ? (m.released ? '눌러서 내 점수와 해설을 보세요' : '결과는 교수님이 공개하면 볼 수 있어요') : '';
+    return `<button class="card" data-a="open-exam" data-id="${esc(id)}"><span class="st ${st[0]}">${st[1]}</span><h3>${esc(m.title || '시험')}</h3><div class="sm">${m.n || 0}문항 · ${m.minutes || 0}분 · ${hint}</div></button>`;
   };
   app.innerHTML = `<div class="phone"><div class="bar"><span data-a="brand">푸른시험${TEST ? ' · 테스트' : ''}</span><span class="who">${esc(who())}</span></div>
     <div class="body tint">${list.length ? list.map(card).join('') : '<div class="box info">지금 열려 있는 시험이 없어요. 교수님이 시험을 열면 여기에 나타납니다.</div>'}</div></div>`;
@@ -199,17 +200,13 @@ on('home', () => { stopExam(); viewHome(); });
 let N = null, noticeT = 0;
 on('open-exam', async el => {
   const id = el.dataset.id, m = S.exams[id]; if (!m) return;
+  if (!isOver(m)) enterFull();   // 누르는 순간부터 전체 화면(안내 화면부터). 브라우저는 누르는 그때만 허락합니다.
   const my = (await be.get(`answers/${id}/${S.me.sid}`)) || {};
-  N = { id, checked: false, my };
+  // wait: 교수가 시작하기 전에 대기실에 들어온 학생 → 교수가 시작하면 5·4·3·2·1 뒤 모두 함께 시작
+  N = { id, checked: false, my, wait: m.status === 'open', going: false };
   if (my.submittedAt) return viewDone();
-  if (isOver(m)) return m.released ? openReview(id, 'result') : viewDone();
-  if (m.status === 'running' && my.startedAt && my.sess) return be.now() < deadline(m, my.startedAt, my.until) ? startExam() : viewDone();
-  // 시험이 이미 진행 중이면(늦게 들어온 학생) 시험을 누른 이때부터 각자 시간이 흐릅니다
-  if (m.status === 'running' && !my.startedAt && !(C.appOnlyOn(m) && IS_ANDROID && !APP)) {   // (앱을 깔아야 하는 학생은 시간을 재지 않음)
-    const first = { startedAt: be.now() };
-    if (!my.who) first.who = { name: S.me.name, cls: S.me.cls };
-    try { await within(be.update(`answers/${id}/${S.me.sid}`, first)); Object.assign(my, first); } catch (e) {}
-  }
+  if (isOver(m)) return !my.startedAt ? viewMissed(id) : m.released ? openReview(id, 'result') : viewDone();
+  if (m.status === 'running' && my.startedAt) return be.now() < deadline(m, my.startedAt, my.until) ? startExam() : viewDone();   // 이어서 풀기
   viewNotice();
 });
 const APK_URL = 'https://github.com/lsc571-max/pureun-exam/releases/latest/download/pureun-exam.apk';
@@ -225,7 +222,7 @@ function viewNotice() {
   const running = m.status === 'running';
   const needApp = C.appOnlyOn(m) && IS_ANDROID && !APP;   // 안드로이드는 앱으로만 응시
   const camReady = !C.camOn(m) || N.camOk || N.camSkip;
-  const ready = running && N.checked && dndOn() && !needApp && camReady;
+  const prepared = N.checked && dndOn() && !needApp && camReady, ready = running && prepared;
   const nt = m.notice || {};
   const dndBox = !APP ? `<div class="box info">전화와 알림이 시험을 방해하지 않게 <b>방해 금지 모드</b>를 켜 주세요.${/iPhone|iPad/i.test(navigator.userAgent) ? '\n아이폰은 <b>사용법 유도</b>(설정 → 손쉬운 사용)를 켜고 옆 버튼을 세 번 누르면 시험 화면이 고정됩니다.' : ''}</div><button class="btn gh" style="flex:none" data-a="dnd">방해 금지 모드 켜는 방법</button>`
     : appCall('canAutoDnd', false) ? '<div class="box ok">시험을 시작하면 <b>방해 금지 모드가 자동으로 켜지고</b>, 끝나면 원래대로 돌아갑니다.</div>'
@@ -236,7 +233,7 @@ function viewNotice() {
       <div class="h1">${esc(nt.title || m.title || '시험')}</div>
       ${nt.body ? `<div class="txt">${esc(nt.body)}</div>` : ''}
       <ul class="rules">
-        ${running && N.my.startedAt ? `<li><b>시험을 누른 때부터 시간이 흐르고 있습니다.</b> 남은 시간 <b id="nleft">${C.fmtClock(Math.max(0, deadline(m, N.my.startedAt, N.my.until) - be.now()))}</b> · 끝나면 자동으로 제출됩니다.</li>` : `<li><b>시험 시작</b>을 누른 때부터 <b>${m.minutes}분</b>이 흐르고, 끝나면 자동으로 제출됩니다.</li>`}${running ? `<li>늦게 시작해도 전체 마감 시각 <b>${hhmmss(m.endAt).slice(0, 5)}</b>에는 모두 끝납니다.</li>` : ''}
+        ${N.wait ? `<li>확인을 마치고 기다리면, <b>교수님이 시작할 때 5초 뒤 모두 함께</b> 시작됩니다. 그때부터 <b>${m.minutes}분</b>이 흐르고, 끝나면 자동으로 제출됩니다.</li>` : `<li>확인을 마치고 <b>시험 시작</b>을 누르면 5초 뒤 1번 문제가 나오고, 그때부터 <b>${m.minutes}분</b>이 흐릅니다. 끝나면 자동으로 제출됩니다.</li>`}
         <li>문제 순서와 보기 순서는 학생마다 다릅니다.</li>
         <li>시험 화면을 벗어나면 <b>횟수와 시각이 기록</b>됩니다.${m.leaveLock === 0 ? '' : ` <b>${Number.isFinite(m.leaveLock) && m.leaveLock > 0 ? m.leaveLock : 2}번</b> 벗어나면 화면이 잠기고, 교수님이 풀어 주셔야 합니다.`}</li>
         <li>화면 캡처·녹화·복사는 금지입니다.</li>
@@ -250,18 +247,17 @@ function viewNotice() {
           ${N.camErr ? '<div class="box no"><b>카메라를 켤 수 없어요.</b> 카메라 사용을 허용했는지 확인하고 다시 눌러 주세요. 계속 안 되면 교수님께 말씀하세요.</div>' : ''}
           <button class="btn am" style="flex:none" data-a="cam-test">카메라 확인하기</button>${N.camErr ? '<button class="btn gh" style="flex:none" data-a="cam-skip">카메라 없이 시작 (교수님께 표시됨)</button>' : ''}`}
       <button class="check ${N.checked ? 'on' : ''}" data-a="agree" aria-pressed="${N.checked}"><i>✓</i>확인했습니다</button>
-      <div class="sm">${running ? '' : '교수님이 시험을 시작하면 아래 버튼이 켜집니다. 이 화면에서 기다려 주세요.'}</div>
+      <div class="sm">${N.wait ? (prepared ? '준비가 끝났습니다. 이 화면에서 기다려 주세요.' : '위의 확인을 마치고 기다려 주세요.') : ''}</div>
     </div>
-    <div class="foot"><button class="btn gh" style="flex:0 0 30%" data-a="home">나가기</button><button class="btn am" data-a="start" ${ready ? '' : 'disabled'}>시험 시작</button></div></div>`;
+    <div class="foot"><button class="btn gh" style="flex:0 0 30%" data-a="home">나가기</button>${N.wait
+      ? `<button class="btn am" data-a="start" disabled>${!running ? '교수님이 시작하면 자동으로 시작됩니다' : prepared ? '곧 시작합니다' : '확인을 마치면 바로 시작됩니다'}</button>`
+      : `<button class="btn am" data-a="start" ${ready ? '' : 'disabled'}>시험 시작</button>`}</div></div>`;
+  try { if (APP && APP.fullscreen) APP.fullscreen(true); } catch (e) {}
+  if (N.wait && ready) go();   // 대기실 학생: 교수가 시작했고 확인도 끝났으면 바로 5·4·3·2·1
   clearInterval(noticeT);
   // 앱: 방해 금지 설정을 바꾸고 돌아오면 안내와 시작 버튼을 바로 고쳐 보여 줍니다
   const dndShown = `${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}`;
-  noticeT = setInterval(() => {
-    if (view !== 'notice') return clearInterval(noticeT);
-    const nl = $('nleft'), mm = S.exams[N.id];
-    if (nl && mm && N.my.startedAt) { const l = deadline(mm, N.my.startedAt, N.my.until) - be.now(); nl.textContent = C.fmtClock(Math.max(0, l)); if (l <= 0) { clearInterval(noticeT); return viewDone(); } }
-    if (APP && `${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}` !== dndShown) keepScroll(viewNotice);
-  }, 1000);
+  if (APP) noticeT = setInterval(() => { if (view !== 'notice') return clearInterval(noticeT); if (`${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}` !== dndShown) keepScroll(viewNotice); }, 1000);
 }
 on('agree', () => { N.checked = !N.checked; const y = document.querySelector('.body').scrollTop; viewNotice(); document.querySelector('.body').scrollTop = y; });
 on('dnd', () => {
@@ -276,7 +272,14 @@ on('cam-test', async () => {
   if (view === 'notice') keepScroll(viewNotice);
 });
 on('cam-skip', () => { N.camSkip = true; keepScroll(viewNotice); });
-on('start', () => { enterFull(); startExam(); });   // 누른 바로 그때 전체 화면을 켭니다(브라우저는 누르는 순간에만 허락)
+on('start', () => { enterFull(); go(); });   // 누른 바로 그때 전체 화면을 켭니다(브라우저는 누르는 순간에만 허락)
+// 5·4·3·2·1 뒤 1번 문제부터. 시간은 이때부터 흐릅니다.
+async function go() {
+  if (!N || N.going) return;
+  N.going = true; const mine = N;
+  await countdown(5);
+  if (N === mine && view === 'notice') startExam(); else mine.going = false;
+}
 
 /* ================= 학생: 시험 보기 ================= */
 let X = null;   // 지금 보고 있는 시험
@@ -334,7 +337,7 @@ async function startExam() {
       if (locked()) showLock();
     }
   } catch (e) {
-    console.error(e); X = null;
+    console.error(e); X = null; if (N) N.going = false;
     if (/PERMISSION/i.test(String(e.code || e.message))) { toast('지금은 시험을 시작할 수 없어요.'); viewNotice(); } else toast(errText(e));
   }
 }
@@ -571,7 +574,7 @@ document.addEventListener('fullscreenchange', () => {
   setTimeout(() => { if (!X || X.done || document.hidden || X.away || !$('guard').hidden || Date.now() - (X.backAt || 0) < 2500) return; wentAway('unfull'); cameBack(); }, 400);
 });
 // 잠금이 풀린 뒤 등: 시험 중 화면을 누르면 다시 전체 화면으로
-document.addEventListener('pointerdown', () => { if (FS_OK && view === 'exam' && X && !X.done && !document.fullscreenElement && !locked() && $('guard').hidden) enterFull(); }, true);
+document.addEventListener('pointerdown', () => { if (FS_OK && view === 'notice') return enterFull(); if (FS_OK && view === 'exam' && X && !X.done && !document.fullscreenElement && !locked() && $('guard').hidden) enterFull(); }, true);
 // 세로로만: 휴대폰을 가로로 돌리면 "세로로 돌려 주세요"를 띄웁니다(앱은 세로로 고정)
 const TOUCH = matchMedia('(pointer:coarse)').matches;
 function paintTurn() {
@@ -672,7 +675,7 @@ document.addEventListener('keydown', e => {
 /* ================= 학생: 마무리 쪽 ================= */
 function viewDone() {
   if (cancelPending) { cancelPending = false; view = 'done'; return entryCancelled(); }
-  view = 'done';
+  view = 'done'; exitFull();
   const m = S.exams[N.id] || {}, e = m.end || {}, my = N.my || {};
   const cnt = Object.values(my.a || {}).filter(v => v !== '' && v != null).length;
   app.innerHTML = shell(`<div style="text-align:center;display:flex;flex-direction:column;gap:14px;align-items:center">
@@ -685,29 +688,35 @@ function viewDone() {
     <button class="btn gh" style="flex:none;width:100%" data-a="home">처음으로</button></div>`, true);
 }
 on('open-result', el => openReview(el.dataset.id, 'result'));
-on('open-practice', el => openReview(el.dataset.id, 'practice'));
+function viewMissed(id) {
+  view = 'done'; S.took[id] = false; exitFull();
+  const m = S.exams[id] || {};
+  app.innerHTML = shell(`<div style="text-align:center;display:flex;flex-direction:column;gap:14px;align-items:center">
+    <div class="chip">${esc(m.title || '시험')}</div>
+    <div class="h1">이 시험을 보지 않아 결과가 없습니다</div>
+    <button class="btn gh" style="flex:none;width:100%" data-a="home">처음으로</button></div>`, true);
+}
 
 /* ================= 학생: 결과 보기 · 문제풀이 모드 ================= */
 let R = null;
 async function openReview(id, mode) {
   try {
-    const sid = S.me.sid;
-    const [sheetRec, keyRec, imgs, my, essay] = await Promise.all([
-      be.get('sheets/' + id), be.get('keys/' + id), be.get('images/' + id),
-      mode === 'result' ? be.get(`answers/${id}/${sid}`) : null, mode === 'result' ? be.get(`essay/${id}/${sid}`) : null,
+    const sid = S.me.sid, my = await be.get(`answers/${id}/${sid}`);
+    if (!my || !my.startedAt) return viewMissed(id);   // 시험을 보지 않은 학생은 문제·정답·해설을 볼 수 없음
+    const [sheetRec, keyRec, imgs, essay] = await Promise.all([
+      be.get('sheets/' + id), be.get('keys/' + id), be.get('images/' + id), be.get(`essay/${id}/${sid}`),
     ]);
     const sheet = C.fixSheet(parse(sheetRec, [])), key = parse(keyRec, {});
     if (!sheet.length) return toast('문제를 불러오지 못했어요.');
-    let answers = (my && my.a) || {};
-    if (mode === 'practice') { try { answers = JSON.parse(LS.get(`prac:${id}:${sid}`) || '{}'); } catch (e) { answers = {}; } }
-    R = { id, mode, sheet, key, imgs: imgs || {}, answers, essay: essay || {}, idx: mode === 'result' ? -1 : 0, onlyWrong: false, shown: {} };
+    const answers = my.a || {};
+    R = { id, mode, sheet, key, imgs: imgs || {}, answers, essay: essay || {}, idx: -1, onlyWrong: false, dir: '' };
     R.score = C.scoreStudent(sheet, key, answers, R.essay);
     view = 'review'; renderReview();
   } catch (e) { toast(/PERMISSION/i.test(String(e.code || e.message)) ? '아직 공개되지 않았어요.' : errText(e)); }
 }
 const reviewList = () => (R.onlyWrong ? R.sheet.filter(q => R.score.wrong.includes(q.id)) : R.sheet);
 function renderReview() {
-  const m = S.exams[R.id] || {}, list = reviewList(), sc = R.score, prac = R.mode === 'practice';
+  const m = S.exams[R.id] || {}, sc = R.score;
   if (R.idx === -1) {
     app.innerHTML = `<div class="phone"><div class="bar"><span>내 결과</span><span class="who">${esc(who())}</span></div>
       <div class="body"><div class="chip">${esc(m.title || '')}</div>
@@ -718,46 +727,47 @@ function renderReview() {
       <div class="foot"><button class="btn gh" style="flex:0 0 28%" data-a="home">나가기</button><button class="btn gh" data-a="rv-wrong" ${sc.wrong.length ? '' : 'disabled'}>틀린 문항만</button><button class="btn" data-a="rv-all">전체 보기</button></div></div>`;
     return;
   }
+  const list = reviewList();
   R.idx = Math.max(0, Math.min(R.idx, list.length - 1));
   const q = list[R.idx], k = R.key[q.id] || {}, a = R.answers[q.id], no = R.sheet.indexOf(q) + 1;
   const has = a !== undefined && a !== null && a !== '';
   const p = R.score.per[q.id];
-  // 문제풀이: 객관식·드롭다운은 고르면 바로, 나머지는 "정답 확인"을 눌러야 정답이 보입니다.
-  const reveal = !prac || R.shown[q.id] || ((q.k === 'choice' || q.k === 'dropdown') && has);
-  const live = prac && !reveal;
   let body;
   if (C.hasOpts(q.k)) {
     const mineSet = q.k === 'check' ? C.unpackChecks(a) : (has ? [Number(a)] : []), good = q.k === 'check' ? (k.a || []) : [k.a];
     body = (q.k === 'check' ? '<div class="sm">맞는 것을 모두 고르는 문제입니다.</div>' : '') + q.opts.map((t, i) => {
-      const mine = mineSet.includes(i), right = reveal && good.includes(i);
-      return `<button class="opt ${q.k === 'check' ? 'sq' : ''} ${right ? 'right' : mine && reveal ? 'wrong' : mine ? 'on' : ''}" ${live ? `data-a="${q.k === 'check' ? 'pr-tick' : 'pr-pick'}" data-v="${i}"` : 'disabled'}><span class="n">${i + 1}</span><span>${esc(t)}</span>${right ? `<span class="tag">정답${mine ? ' · 내 답' : ''}</span>` : mine ? '<span class="tag">내 답</span>' : ''}</button>`;
-    }).join('') + (reveal && !mineSet.length ? '<div class="box warn">답을 고르지 않았습니다.</div>' : '') + (live && q.k === 'check' ? '<button class="btn gh" style="flex:none" data-a="pr-show">정답 확인</button>' : '');
+      const mine = mineSet.includes(i), right = good.includes(i);
+      return `<button class="opt ${q.k === 'check' ? 'sq' : ''} ${right ? 'right' : mine ? 'wrong' : ''}" disabled><span class="n">${i + 1}</span><span>${esc(t)}</span>${right ? `<span class="tag">정답${mine ? ' · 내 답' : ''}</span>` : mine ? '<span class="tag">내 답</span>' : ''}</button>`;
+    }).join('') + (!mineSet.length ? '<div class="box warn">답을 고르지 않았습니다.</div>' : '');
   } else if (q.k === 'short') {
-    body = live ? `<input class="in" id="pr-text" placeholder="답을 짧게 쓰세요" maxlength="100" autocomplete="off" value="${esc(a || '')}"><button class="btn gh" style="flex:none" data-a="pr-show">정답 확인</button>`
-      : `<div class="box ${p.ok ? 'ok' : 'no'}"><b>내 답 — ${p.ok ? '정답' : '오답'}</b>\n${esc(has ? a : '(답을 쓰지 않았습니다)')}</div><div class="box ok"><b>정답</b>\n${esc((k.answers || []).join(' / '))}</div>`;
-  } else if (prac) {
-    body = `<textarea class="in ta" id="pr-text" placeholder="답을 써 본 뒤 모범 답안을 확인하세요" maxlength="4000">${esc(a || '')}</textarea>${reveal ? '' : '<button class="btn gh" style="flex:none" data-a="pr-show">모범 답안 보기</button>'}`;
+    body = `<div class="box ${p.ok ? 'ok' : 'no'}"><b>내 답 — ${p.ok ? '정답' : '오답'}</b>\n${esc(has ? a : '(답을 쓰지 않았습니다)')}</div><div class="box ok"><b>정답</b>\n${esc((k.answers || []).join(' / '))}</div>`;
   } else {
     body = `<div class="box info"><b>내 답</b>\n${esc(has ? a : '(답을 쓰지 않았습니다)')}</div><div class="box ${p.graded ? 'ok' : 'warn'}"><b>${p.graded ? `받은 점수 ${p.pts} / ${q.pts}점` : '아직 채점 전입니다'}</b></div>`;
   }
-  const expl = reveal ? `${q.k === 'long' && k.model ? `<div class="box ok"><b>모범 답안</b>\n${esc(k.model)}</div>` : ''}${k.why ? `<div class="box ok"><b>${q.k === 'long' ? '채점 기준' : '해설'}</b>\n${esc(k.why)}</div>` : ''}` : '';
-  app.innerHTML = `<div class="phone"><div class="bar"><span>${prac ? '문제풀이' : R.onlyWrong ? '틀린 문항' : '해설'} ${R.idx + 1} / ${list.length}</span><button data-a="${prac ? 'home' : 'rv-top'}">${prac ? '나가기' : '점수 화면'}</button></div>
+  const expl = `${q.k === 'long' && k.model ? `<div class="box ok"><b>모범 답안</b>\n${esc(k.model)}</div>` : ''}${k.why ? `<div class="box ok"><b>${q.k === 'long' ? '채점 기준' : '해설'}</b>\n${esc(k.why)}</div>` : ''}`;
+  // 위: 틀린 문항만 | 전체 보기 · 점수   아래: 나가기 · 이전 · 다음 (옆으로 밀어도 넘어감)
+  app.innerHTML = `<div class="phone"><div class="bar"><span>${R.onlyWrong ? '틀린 문항' : '해설'} ${R.idx + 1} / ${list.length}</span><button data-a="rv-top">점수</button></div>
     <div class="prog"><i style="width:${(R.idx + 1) / list.length * 100}%"></i></div>
-    <div class="body"><div class="chip">${no}번 · ${esc(typeChip(q))}${reveal && k.level ? ` · 난이도 ${esc(k.level)}` : ''}</div><div class="q">${esc(q.q)}</div>${media(q, R.imgs)}${body}${expl}</div>
-    <div class="foot"><button class="btn gh" data-a="rv-prev" ${R.idx ? '' : 'disabled'}>이전</button>${prac ? '<button class="btn gh" data-a="pr-reset">처음부터 다시</button>' : ''}<button class="btn" data-a="rv-next" ${R.idx < list.length - 1 ? '' : 'disabled'}>다음</button></div></div>`;
-  const ta = $('pr-text');
-  if (ta) ta.addEventListener('input', () => { R.answers[q.id] = ta.value; savePractice(); });
+    <div class="rvtabs"><button data-a="rv-wrong" class="${R.onlyWrong ? 'on' : ''}" ${sc.wrong.length ? '' : 'disabled'}>틀린 문항만</button><button data-a="rv-all" class="${R.onlyWrong ? '' : 'on'}">전체 보기</button></div>
+    <div class="body qbody rvbody ${R.dir ? 'in-' + R.dir : ''}"><div class="chip">${no}번 · ${esc(typeChip(q))}${k.level ? ` · 난이도 ${esc(k.level)}` : ''}</div><div class="q">${esc(q.q)}</div>${media(q, R.imgs)}${body}${expl}</div>
+    <div class="foot"><button class="btn gh" style="flex:0 0 28%" data-a="home">나가기</button><button class="btn gh" data-a="rv-prev" ${R.idx ? '' : 'disabled'}>이전</button><button class="btn" data-a="rv-next" ${R.idx < list.length - 1 ? '' : 'disabled'}>다음</button></div></div>`;
+  R.dir = '';
 }
-const savePractice = () => LS.set(`prac:${R.id}:${S.me.sid}`, JSON.stringify(R.answers));
+function rvMove(d, swipe) {
+  if (!R || R.idx < 0) return;
+  const n = reviewList().length, to = R.idx + d;
+  if (to < 0 || to >= n) return swipe ? bump(d > 0 ? '마지막 문항입니다' : '첫 문항입니다') : undefined;
+  R.idx = to; R.dir = d > 0 ? 'next' : 'prev'; renderReview();
+}
 on('rv-goto', el => { R.onlyWrong = false; R.idx = R.sheet.findIndex(q => q.id === el.dataset.id); renderReview(); });
-on('rv-wrong', () => { R.onlyWrong = true; R.idx = 0; renderReview(); });
-on('rv-all', () => { R.onlyWrong = false; R.idx = 0; renderReview(); });
+on('rv-wrong', () => { if (!R.onlyWrong || R.idx < 0) { R.onlyWrong = true; R.idx = 0; } renderReview(); });
+on('rv-all', () => {
+  if (R.onlyWrong && R.idx >= 0) { const q = reviewList()[R.idx]; R.onlyWrong = false; R.idx = Math.max(0, R.sheet.indexOf(q)); }   // 보던 문항 그대로
+  else if (R.idx < 0) { R.onlyWrong = false; R.idx = 0; }
+  renderReview();
+});
 on('rv-top', () => { R.idx = -1; renderReview(); });
-on('rv-prev', () => { R.idx--; renderReview(); });
-on('rv-next', () => { R.idx++; renderReview(); });
-on('pr-pick', el => { const q = reviewList()[R.idx]; R.answers[q.id] = +el.dataset.v; savePractice(); renderReview(); });
-on('pr-tick', el => { const q = reviewList()[R.idx], v = +el.dataset.v, cur = C.unpackChecks(R.answers[q.id]); R.answers[q.id] = C.packChecks(cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]); savePractice(); renderReview(); });
-on('pr-show', () => { R.shown[reviewList()[R.idx].id] = true; R.score = C.scoreStudent(R.sheet, R.key, R.answers, R.essay); renderReview(); });
-on('pr-reset', async () => { if (await confirmBox('처음부터 다시 풀까요?', '지금까지 고른 답이 지워집니다.', '다시 풀기')) { R.answers = {}; R.shown = {}; R.idx = 0; savePractice(); renderReview(); } });
+on('rv-prev', () => rvMove(-1, false));
+on('rv-next', () => rvMove(1, false));
 
 boot();

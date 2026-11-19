@@ -177,6 +177,12 @@ public class MainActivity extends Activity {
             });
         }
 
+        /** 시험 안내 화면부터 전체 화면(위아래 줄 숨김). 시험 중에는 끄지 않습니다. */
+        @JavascriptInterface
+        public void fullscreen(boolean on) {
+            ui.post(() -> { if (on || !examOn) immersive(on); });
+        }
+
         /** 시험 끝: 화면 고정 풀기 + 방해 금지 원래대로 */
         @JavascriptInterface
         public void stopLock() {
