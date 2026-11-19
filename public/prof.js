@@ -231,6 +231,8 @@ function lastIn() {
   }
   return last ? { ...last, name: (whoOf(last.sid) || {}).name || last.sid, end } : null;
 }
+const stillGoing = (m, now) => Object.values(P.answers).filter(a => began(a) && !a.submittedAt && dlOf(m, a) + 8000 > now).length;
+const allDone = (m, now) => Object.values(P.answers).some(began) && !stillGoing(m, now);
 function paintClock() {
   if (!P) return; const m = meta(), el = $('pclock'), now = be.now();
   const left = m.status === 'running' ? m.endAt - now : 0, bl = m.status === 'running' ? baseEnd(m) - now : 0;
@@ -243,6 +245,11 @@ function paintClock() {
   paintBand();
   // 전체 마감이 지나면(또는 "시험 종료"를 누르면) 학생들의 마지막 답과 제출을 8초 동안 받은 뒤 시험을 닫습니다
   if (m.status === 'running' && left < -8000 && !P.closing) { P.closing = true; setMeta({ status: 'ended' }).catch(() => {}).then(() => { if (P) P.closing = false; }); }
+  // 기본 종료가 지났고, 시험을 시작한 학생이 모두 끝났으면(제출했거나 자기 시간이 끝남) 시험을 저절로 닫습니다
+  else if (m.status === 'running' && !P.closing && bl < -8000 && allDone(m, now)) {
+    P.closing = true;
+    setMeta({ status: 'ended', autoEnd: now }).then(() => toast('모든 학생이 끝나 시험을 자동으로 종료했어요.', 6000)).catch(() => {}).then(() => { if (P) P.closing = false; });
+  }
 }
 // 시험 중에는 어느 탭에서든 맨 위에 진행 상황을 보여 줍니다. 누르면 진행 탭으로 갑니다.
 // 기본 종료 종소리(교수 화면에서만). 같은 시험·같은 종료 시각에는 한 번만 울립니다.
@@ -290,7 +297,7 @@ function paintBand() {
   const c = liveCounts(), left = m.endAt - be.now();
   el.hidden = false;
   const bl = baseEnd(m) - be.now(), li = lastIn();
-  el.innerHTML = `<b>시험 중</b><span>${bl > 0 ? `기본 종료까지 ${C.fmtClock(bl)}` : left > 0 ? `기본 시간 끝${li ? ` <i class="dim">· 전체 마감 ${hhmmss(li.end)}</i>` : ''}` : '종료하는 중…'}</span><span>응시 중 ${c.go}명</span><span>제출 ${c.sub}명</span><span>이탈 ${c.lv}명</span>${c.locked ? `<span class="alarm">잠긴 학생 ${c.locked}명 — 확인 필요</span>` : ''}<span>평균 ${c.avg.toFixed(1)} / ${c.max}점 <small>(자동 채점 기준)</small></span>${P.tab === 'run' ? '' : '<span class="go">진행 탭으로 →</span>'}`;
+  el.innerHTML = `<b>시험 중</b><span>${bl > 0 ? `기본 종료까지 ${C.fmtClock(bl)}` : left > 0 ? `기본 시간 끝 · 아직 푸는 학생 ${stillGoing(m, be.now())}명 (모두 끝나면 자동 종료)${li ? ` <i class="dim">· 전체 마감 ${hhmmss(li.end)}</i>` : ''}` : '종료하는 중…'}</span><span>응시 중 ${c.go}명</span><span>제출 ${c.sub}명</span><span>이탈 ${c.lv}명</span>${c.locked ? `<span class="alarm">잠긴 학생 ${c.locked}명 — 확인 필요</span>` : ''}<span>평균 ${c.avg.toFixed(1)} / ${c.max}점 <small>(자동 채점 기준)</small></span>${P.tab === 'run' ? '' : '<span class="go">진행 탭으로 →</span>'}`;
 }
 const exam = () => C.splitExam(P.pages);
 const clsFilter = () => `<div class="tabs">${[['', '전체'], ...allClasses().map(c => [c, c])].map(([c, n]) => `<button data-a="p-cls" data-c="${esc(c)}" class="${P.cls === c ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>`;
@@ -339,7 +346,7 @@ function tabRun() {
     running: `<button class="btn s gh" data-a="ex-extend">시간 5분 연장</button><button class="btn s red" data-a="ex-end">강제 종료 (모든 학생)</button>`,
     ended: `<button class="btn s ${m.released ? 'gh' : 'am'}" data-a="ex-release">${m.released ? '결과 공개 취소' : '결과 공개'}</button>${m.released ? '<button class="btn s gh" data-a="ex-reopen">못 본 학생 열기 (결과 공개 취소 후)</button>' : '<button class="btn s gh" data-a="ex-resume">다시 열기 (못 본 학생 응시)</button>'}`,
   }[m.status || 'draft'];
-  const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 안내를 확인하고 기다리고 있습니다. 시작을 누르면 5 · 4 · 3 · 2 · 1 뒤 기다리던 학생이 모두 함께 시작합니다.', running: `대기실 학생은 교수님이 시작할 때 함께, 늦게 온 학생은 "시험 시작"을 누른 때부터 각자 ${m.minutes}분. 각자 시간이 끝나면 자동으로 제출됩니다. 모두 끝내려면 강제 종료를 누르세요.`, ended: '시험이 끝났습니다. 장문형을 채점한 뒤 결과를 공개하세요.' }[m.status || 'draft'];
+  const guide = { draft: '문항을 준비한 뒤 대기실을 여세요. 학생은 대기실에서 안내를 읽고 기다립니다.', open: '학생들이 입장해 안내를 확인하고 기다리고 있습니다. 시작을 누르면 5 · 4 · 3 · 2 · 1 뒤 기다리던 학생이 모두 함께 시작합니다.', running: `대기실 학생은 교수님이 시작할 때 함께, 늦게 온 학생은 "시험 시작"을 누른 때부터 각자 ${m.minutes}분. 각자 시간이 끝나면 자동으로 제출됩니다. 모두 끝내려면 강제 종료를 누르세요.`, ended: `${m.autoEnd ? `모든 학생이 끝나 ${hhmmss(m.autoEnd)}에 자동으로 종료되었습니다. ` : '시험이 끝났습니다. '}장문형을 채점한 뒤 결과를 공개하세요.` }[m.status || 'draft'];
   const scores = real.filter(r => began(r.a)).map(r => C.scoreStudent(sheet, key, r.a.a, P.essay[r.sid]).total);
   $('pmain').innerHTML = `
     <div class="panel"><div class="row"><h2 style="margin-right:auto">${ST[m.status || 'draft'][1]}</h2><span class="sm">기본 종료까지</span><span class="pill blue" style="font-size:20px;padding:2px 14px" id="pclock">--:--</span></div>
@@ -376,7 +383,7 @@ on('ex-start', async () => {
   if (!(await confirmBox('시험을 시작할까요?', `5 · 4 · 3 · 2 · 1 뒤에 시작합니다.\n대기실에서 기다리던 학생은 <b>모두 함께</b> 시작하고, 늦게 온 학생은 <b>시험 시작</b>을 누른 때부터, 각자 <b>${m.minutes}분</b>이 흐릅니다. 학생마다 자기 시간이 끝나면 자동으로 제출됩니다.\n<b>${m.minutes}분</b> 뒤(기본 종료)에 이 화면에서 종이 울립니다. 모두 끝내려면 <b>강제 종료</b>를 누르세요.`, '시작'))) return;
   await countdown(5);
   // 전체 마감은 두지 않습니다(학생마다 자기 시간). endAt 은 하루 뒤로 두어 서버 규칙의 안전장치로만 씁니다.
-  const now = be.now(); await setMeta({ status: 'running', practice: false, startAt: now, extra: 0, endAt: now + 24 * 3600000 });
+  const now = be.now(); await setMeta({ status: 'running', practice: false, startAt: now, extra: 0, endAt: now + 24 * 3600000, autoEnd: null });
 });
 on('ex-extend', async () => { const m = meta(); await setMeta({ extra: (m.extra || 0) + 5 * 60000, endAt: m.endAt + 5 * 60000 }); toast('모든 학생의 시간을 5분 연장했어요.'); });
 on('ex-end', async () => {
@@ -405,7 +412,7 @@ on('rs-lock', el => el.classList.toggle('on'));
 on('rs-go', async () => {
   const minutes = Math.round(+$('rs-min').value), lock = $('rs-lock').classList.contains('on');
   if (!(minutes >= 1 && minutes <= 300)) return toast('시간은 1~300분으로 입력해 주세요.');
-  const now = be.now(), u = { [`exams/${P.id}/status`]: 'running', [`exams/${P.id}/practice`]: false, [`exams/${P.id}/extra`]: 0, [`exams/${P.id}/startAt`]: now, [`exams/${P.id}/endAt`]: now + minutes * 60000 };
+  const now = be.now(), u = { [`exams/${P.id}/status`]: 'running', [`exams/${P.id}/practice`]: false, [`exams/${P.id}/extra`]: 0, [`exams/${P.id}/startAt`]: now, [`exams/${P.id}/endAt`]: now + minutes * 60000, [`exams/${P.id}/autoEnd`]: null };
   for (const [sid, a] of Object.entries(P.answers)) {
     if (!a.startedAt || a.submittedAt) continue;
     if (!began(a)) u[`answers/${P.id}/${sid}/startedAt`] = null;   // 시험을 눌러 보기만 한 학생은 "못 본 학생"으로: 다시 누른 때부터 새로 시간을 받음

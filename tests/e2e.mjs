@@ -500,17 +500,20 @@ try {
   assert.ok(!seenLeft.includes(first) && new Set(seenLeft).size === 4, '안 푼 문제만 돌지 않음: ' + seenLeft.join(','));
   await act(stu2, 'next'); assert.equal(await qText(stu2), left1, '다시 처음 안 푼 문제로 돌아오지 않음');
   await act(stu2, 'only-off'); assert.equal(await stu2.locator('.onlyband').count(), 0);
-  await prof.evaluate(id => import('./state.js').then(m => m.be.update('exams/' + id, { endAt: Date.now() + 1500 })), exId);
+  // 기본 종료가 지난 것으로 하고, 이 학생의 시간을 곧 끝나게 함 → 이 학생이 끝나면 모두 끝났으므로 시험이 저절로 닫힘
+  await prof.evaluate(id => import('./state.js').then(m => m.be.update('', { [`exams/${id}/startAt`]: Date.now() - 400000, [`answers/${id}/20261301/until`]: Date.now() + 1500 })), exId);
   await stu2.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent), null, { timeout: 8000 });
   d = await db(prof);
   assert.ok(d.answers[exId]['20261301'].submittedAt > 0, '자동 제출이 기록되지 않음');
   assert.equal(Object.keys(d.answers[exId]['20261301'].a).length, 1);
 
   /* ---------- 교수: 종료, 채점, 결과 ---------- */
-  say('시간이 끝나면 교수 화면이 시험을 저절로 닫는다');
+  say('기본 시간이 지나고 학생이 모두 끝나면 시험이 저절로 닫히고, 교수 화면에 표시된다');
   await prof.waitForFunction(() => /제출 \d\d:/.test(document.getElementById('pmain').textContent));
   await prof.waitForSelector('[data-a="ex-release"]', { timeout: 20000 });
   assert.equal((await db(prof)).exams[exId].status, 'ended');
+  assert.ok((await db(prof)).exams[exId].autoEnd > 0, '모든 학생이 끝나서 닫힌 것이 아님');
+  assert.match(await prof.textContent('#pmain'), /모든 학생이 끝나 .*자동으로 종료되었습니다/);
 
   say('단답형: 학생이 쓴 답을 모아 보고 정답으로 인정한다');
   await act(prof, 'p-tab', '[data-t="grade"]');
