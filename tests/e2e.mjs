@@ -107,6 +107,8 @@ try {
   await prof.fill('#n-title', '모의시험'); await prof.fill('#n-min', '5');
   await act(prof, 'new-exam');
   await prof.waitForSelector('[data-a="ed-paste"]');
+  // 이 테스트의 문항 묶음은 합계 23점이므로 배점 목표를 23점으로 둡니다(기본은 100점)
+  await prof.evaluate(() => import('./state.js').then(async m => { const ex = await m.be.get('exams'); await m.be.update('exams/' + Object.keys(ex)[0], { ptsTarget: 23 }); }));
 
   say('잘못된 붙여 넣기는 알려 준다');
   await act(prof, 'ed-paste');
@@ -121,18 +123,29 @@ try {
   assert.equal(await prof.locator('#qlist .qrow').count(), 5);
   assert.equal(await prof.locator('.qrow.fixed').count(), 2, '안내·마무리 쪽은 고정 줄로 보여야 함');
   assert.equal(await prof.locator('.qrow.fixed [data-a]').count(), 0, '안내·마무리 쪽은 고치거나 지울 수 없어야 함');
-  let d = await db(prof); const exId = Object.keys(d.exams)[0];
+  let d = await db(prof), pg; const exId = Object.keys(d.exams)[0];
   assert.equal(d.exams[exId].n, 5); assert.equal(d.exams[exId].total, 23);
   for (const secret of ['비밀', '사출금형', '"a":', 'answers']) assert.ok(!d.sheets[exId].data.includes(secret), '문제지에 ' + secret + ' 가 들어 있음');
   assert.ok(d.keys[exId].data.includes('비밀해설1')); assert.ok(d.keys[exId].data.includes('사출금형'));
 
-  say('문항 고치기: 저장·취소가 맨 위에 있고 배점이 바뀐다');
+  say('문항 고치기: 배점을 바꾸면 그 문항은 📌고정, 나머지가 합계(목표)에 맞춰 바뀐다');
+  const pts0 = (await pages(prof, exId)).map(p => p.pts);
   await row(prof, '둘째 문제').locator('[data-a="ed-edit"]').click();
   await prof.waitForSelector('.edbar [data-a="f-save"]');
   await prof.fill('#f-pts', '6'); await act(prof, 'f-save');
-  await prof.waitForFunction(() => /25점/.test(document.getElementById('ed-sum').textContent));
-  await row(prof, '둘째 문제').locator('[data-a="ed-edit"]').click(); await prof.fill('#f-pts', '4'); await act(prof, 'f-save');
-  await prof.waitForFunction(() => /23점/.test(document.getElementById('ed-sum').textContent));
+  await prof.waitForFunction(() => /📌 고정/.test(document.getElementById('qlist').textContent));
+  pg = await pages(prof, exId);
+  assert.equal(pg.reduce((t, p) => t + p.pts, 0), 23, '합계가 목표에 맞지 않음'); assert.equal(pg[1].pts, 6); assert.ok(pg[1].fix);
+  assert.match(await prof.textContent('#ed-sum'), /23점/);
+  say('합계를 맞출 수 없으면 알려 주고, "맞추기" 버튼이 나온다');
+  await row(prof, '첫째 문제').locator('[data-a="ed-edit"]').click(); await prof.fill('#f-pts', '20'); await act(prof, 'f-save');
+  await prof.waitForSelector('[data-a="ed-scale"]');
+  assert.match(await prof.textContent('#pmain'), /목표 23점과 달라요.*1점씩도/s);
+  await prof.click('body', { position: { x: 5, y: 5 } }); await key(prof, 'Control+z');
+  await prof.waitForFunction(() => !/ 20점/.test(document.getElementById('qlist').textContent));
+  await key(prof, 'Control+z');
+  await prof.waitForFunction(() => !/📌/.test(document.getElementById('qlist').textContent));
+  assert.deepEqual((await pages(prof, exId)).map(p => p.pts), pts0, '되돌린 뒤 배점이 처음과 다름');
 
   say('보기는 4칸이 기본이고 "보기 추가"로 늘린다');
   await row(prof, '첫째 문제').locator('[data-a="ed-edit"]').click();
@@ -147,7 +160,7 @@ try {
   await row(prof, '첫째 문제').locator('[data-a="ed-edit"]').click(); await prof.waitForSelector('.f-opt');
   await prof.click('[data-a="f-optdel"][data-j="4"]');
   await act(prof, 'f-save'); await prof.waitForFunction(() => document.getElementById('modal').hidden);
-  let pg = await pages(prof, exId);
+  pg = await pages(prof, exId);
   assert.deepEqual(pg[0].opts, ['가1', '나1', '다1', '라1']); assert.equal(pg[0].a, 2, '보기를 빼도 정답 자리는 그대로');
 
   say('답하는 방식을 바꾼다 (객관식 → 단답형 → 객관식)');

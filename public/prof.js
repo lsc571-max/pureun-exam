@@ -198,7 +198,7 @@ async function openExam(id, tab = 'run') {
   P = { id, tab, pages: [], imgs: {}, answers: {}, essay: {}, trash: {}, sel: new Set(), cls: '', rtab: 'rank', gq: '', blind: true, unsubs: [], sheetOpts: {} };
   const [draft, imgs] = await Promise.all([be.get('drafts/' + id), be.get('images/' + id)]);
   if (!P || P.id !== id) return;
-  P.pages = questionsOnly(parse(draft, []).map(C.normalizePage)); P.imgs = imgs || {};
+  P.pages = questionsOnly(parse(draft, []).map(C.normalizePage)); P.imgs = imgs || {}; P.lastAt = (draft && draft.at) || 0;
   P.unsubs.push(be.on('answers/' + id, v => { P.answers = v || {}; live(); }));
   P.unsubs.push(be.on('essay/' + id, v => { P.essay = v || {}; live(); }));
   P.unsubs.push(be.on('trash/' + id, v => { P.trash = v || {}; if (P.tab === 'result') live(); }));
@@ -520,17 +520,22 @@ async function savePagesFor(id, pages) {
     ['keys/' + id]: { data: JSON.stringify(x.key), at },       // 교수용 / 공개 후 학생
     [`exams/${id}/n`]: v.stats.n, [`exams/${id}/total`]: v.stats.total,
   });
-  if (P && P.id === id) P.pages = pages;
+  if (P && P.id === id) { P.pages = pages; P.lastAt = at; }   // 이 창에서 마지막으로 저장한 시각
   return at;
 }
 // 문항을 바꾸고, 되돌리기 기록에 남깁니다. 그 사이에 문항이 바뀌었으면(다른 기기 등) 되돌리지 않고,
 // 시험이 이미 열려 있으면 되돌리기 전에 한 번 묻습니다.
+// 배점 합계 맞추기: 시험을 시작하기 전(준비 중·대기실)에만 자동으로. 시작한 뒤에는 학생 점수가 바뀌지 않게 그대로 둡니다.
+const ptsTarget = () => { const t = Number(meta().ptsTarget); return Number.isInteger(t) && t >= 1 ? t : 100; };
+const autoPts = () => { const st = meta().status || 'draft'; return st === 'draft' || st === 'open'; };
 async function changePages(next, label) {
+  if (autoPts()) next = C.balancePts(next, ptsTarget()).pages;
   const id = P.id, before = P.pages.slice(), after = C.ensureIds(next);
-  let at = 0;
-  const unchanged = async () => { if ((await be.get(`drafts/${id}/at`)) !== at) throw new Error('그 사이에 문항이 바뀌어서 되돌릴 수 없어요.'); };
+  // 다른 기기·창에서 문항을 바꿨으면 되돌리지 않습니다(이 창에서 마지막으로 저장한 것과 서버가 같아야 함 — 여러 번 연달아 되돌리기 가능)
+  const unchanged = async () => { if (!P || P.id !== id || (await be.get(`drafts/${id}/at`)) !== P.lastAt) throw new Error('그 사이에 문항이 바뀌어서 되돌릴 수 없어요.'); };
+  let done = false;
   const guard = async () => { const st = (S.exams[id] || {}).status; return !st || st === 'draft' || confirmBox('문항을 되돌릴까요?', '이 시험은 이미 학생에게 열려 있습니다. 되돌리면 학생에게 보이는 문제와 채점이 바뀝니다.', '되돌리기', { danger: true }); };
-  await record(label, async () => { if (at) await unchanged(); at = await savePagesFor(id, after); }, async () => { await unchanged(); at = await savePagesFor(id, before); }, guard);
+  await record(label, async () => { if (done) await unchanged(); await savePagesFor(id, after); done = true; }, async () => { await unchanged(); await savePagesFor(id, before); }, guard);
 }
 
 const srcOf = p => !p.img ? '' : p.img.startsWith('img:') ? (P.imgs[p.img.slice(4)] || '') : p.img;
@@ -549,6 +554,7 @@ function tabEdit() {
   $('pmain').innerHTML = `
     ${m.status === 'running' ? '<div class="box warn"><b>시험이 진행 중입니다.</b> 지금 문항을 고치면 이미 푼 학생과 달라질 수 있어요.</div>' : ''}
     <div class="panel"><div class="row"><h2 style="margin-right:auto" id="ed-sum">${s.n}문항 · ${s.total}점</h2><span class="sm">${kinds}${kinds ? ' · ' : ''}난이도 하 ${s.byLevel['하']} 중 ${s.byLevel['중']} 상 ${s.byLevel['상']}</span></div>
+      ${ptsBox(s)}
       <div class="ask"><div class="ask-t">AI 부탁문 <span>문제를 만들고 검토할 때 차례로 복사해 쓰세요</span></div>
         <div class="row"><button class="btn s am" data-a="cp" data-k="make">① 문제 만들기</button><button class="btn s am" data-a="cp" data-k="review">② 정확성 검토</button><button class="btn s am" data-a="cp" data-k="final">③ 최종 확인</button></div></div>
       <div class="row"><button class="btn s" data-a="ed-paste">문항 묶음 붙여 넣기</button><button class="btn s gh" data-a="ed-replace">고른 문항만 교체 붙여 넣기</button><button class="btn s gh" data-a="ed-add">빈 문항 추가</button><button class="btn s gh" data-a="ed-del">고른 문항 지우기</button><button class="btn s gh" data-a="pv-open" style="margin-left:auto">학생 화면으로 보기</button></div>
@@ -559,7 +565,7 @@ function tabEdit() {
     <div id="qlist" style="display:flex;flex-direction:column;gap:8px">
     ${P.pages.map((p, i) => {
       const q = C.isQuestion(p), er = errAt(i), wr = warnAt(i);
-      const sub = q ? `${p.t === 'image' || p.t === 'video' ? C.TYPE_NAME[p.t] + ' · ' : ''}${C.KIND_NAME[C.kindOf(p)]} · 난이도 ${esc(p.level)} · ${p.pts}점${answerLabel(p)}${p.img ? ' · 사진' : ''}${p.video ? ' · 영상' : ''}` : esc(p.body || '');
+      const sub = q ? `${p.t === 'image' || p.t === 'video' ? C.TYPE_NAME[p.t] + ' · ' : ''}${C.KIND_NAME[C.kindOf(p)]} · 난이도 ${esc(p.level)} · ${p.pts}점 <button class="mini ${p.fix ? 'on' : ''}" data-a="ed-fix" data-i="${i}" title="${p.fix ? '고정 풀기 — 합계에 맞춰 자동으로' : '이 점수로 고정 — 합계를 맞출 때 바꾸지 않음'}">${p.fix ? '📌 고정' : '자동'}</button>${answerLabel(p)}${p.img ? ' · 사진' : ''}${p.video ? ' · 영상' : ''}` : esc(p.body || '');
       return `<div class="qrow ${er.length ? 'err' : ''}" data-i="${i}"><span class="grip" data-grip="${i}" title="끌어서 순서 바꾸기" aria-hidden="true">⠿</span><input type="checkbox" data-i="${i}" class="ed-sel" ${P.sel.has(i) ? 'checked' : ''} aria-label="고르기">
         <div class="t"><b>${q ? `${++no}. ` : `[${C.TYPE_NAME[p.t] || '알 수 없음'}] `}${esc(q ? p.q : p.title) || '(비어 있음)'}</b><span>${sub}</span>
         ${er.map(e => `<div style="color:var(--red);font-size:13px;font-weight:700">⚠ ${esc(e)}</div>`).join('')}${wr.map(e => `<div style="color:var(--amber);font-size:13px">· ${esc(e)}</div>`).join('')}</div>
@@ -569,6 +575,32 @@ function tabEdit() {
     <div class="qrow fixed"><div class="t"><b>마무리 쪽</b><span>자동으로 만들어집니다 — "고생하셨습니다"와 제출 확인.</span></div></div>`;
   document.querySelectorAll('.ed-sel').forEach(c => c.addEventListener('change', () => { c.checked ? P.sel.add(+c.dataset.i) : P.sel.delete(+c.dataset.i); }));
 }
+// 배점 합계 상자: 목표 점수, 맞지 않을 때 알림과 "맞추기"
+function ptsBox(s) {
+  if (!s.n) return '';
+  const T = ptsTarget(), auto = autoPts(), b = C.balancePts(P.pages, T), nFix = P.pages.filter(p => C.isQuestion(p) && p.fix).length;
+  const head = `<div class="row" style="gap:8px"><label class="sm" style="display:flex;align-items:center;gap:6px">배점 합계 목표 <input class="in" id="ed-target" type="number" min="1" max="1000" value="${T}" style="width:84px;padding:6px 8px;font-size:15px" ${auto ? '' : 'disabled'}>점</label>
+    <span class="sm">${auto ? `직접 점수를 넣은 문항은 📌고정${nFix ? `(${nFix}개)` : ''}, 나머지는 합계가 ${T}점이 되게 자동으로 나눕니다(비율 유지, 남는 점수는 어려운 문항부터).` : '시험을 시작한 뒤에는 학생 점수가 바뀌지 않도록 자동으로 맞추지 않습니다.'}</span></div>`;
+  if (s.total === T) return head;
+  return head + `<div class="box no"><b>배점 합계 ${s.total}점 — 목표 ${T}점과 달라요.</b>${b.msg ? '\n' + esc(b.msg) : ''}${auto ? `\n<button class="btn s am" style="margin-top:6px" data-a="ed-scale">${T}점에 맞추기 (고정한 문항까지 비율대로)</button>` : ''}</div>`;
+}
+on('ed-scale', async () => {
+  const T = ptsTarget();
+  if (!(await confirmBox(`${T}점에 맞출까요?`, '고정한 문항까지 모든 문항의 배점을 지금 비율대로 줄이거나 늘립니다. 마음에 들지 않으면 문항을 고쳐 직접 바꾸거나 Ctrl+Z 로 되돌리세요.', '맞추기'))) return;
+  await changePages(C.scalePts(P.pages, T), `배점 ${T}점에 맞추기`); tabEdit();
+});
+on('ed-fix', async el => {
+  const i = +el.dataset.i, a = P.pages.slice(), p = a[i]; if (!p) return;
+  a[i] = p.fix ? (({ fix, ...r }) => r)(p) : { ...p, fix: true };
+  await changePages(a, p.fix ? '배점 고정 풀기' : '배점 고정'); tabEdit();
+});
+document.addEventListener('change', async e => {
+  if (e.target.id !== 'ed-target' || !P) return;
+  const t = Math.round(+e.target.value);
+  if (!(t >= 1 && t <= 1000)) return toast('목표 점수는 1~1000점으로 정해 주세요.');
+  await setMeta({ ptsTarget: t });
+  await changePages(P.pages, `배점 목표 ${t}점`); tabEdit();
+});
 const selected = () => [...P.sel].filter(i => i < P.pages.length).sort((a, b) => a - b);
 // 지운 직후에는 되돌릴 수 있게 합니다
 async function removePages(idx) {
@@ -697,7 +729,7 @@ function editPage(i) {
     <div class="row"><label class="f" style="flex:1;min-width:130px">답하는 방식<select class="in" id="f-kind">${C.KINDS.map(x => `<option value="${x}" ${k === x ? 'selected' : ''}>${C.KIND_NAME[x]}</option>`).join('')}</select></label>
       <label class="f" style="flex:1;min-width:120px">쪽 모양<select class="in" id="f-shape"><option value="">기본</option><option value="image" ${p.t === 'image' ? 'selected' : ''}>그림 문제</option><option value="video" ${p.t === 'video' ? 'selected' : ''}>영상 문제</option></select></label>
       <label class="f" style="width:84px">난이도<select class="in" id="f-level">${['하', '중', '상'].map(l => `<option ${p.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label class="f" style="width:84px">배점<input class="in" id="f-pts" type="number" min="0" step="1" value="${p.pts || ''}"></label></div>
+      <label class="f" style="width:84px" title="직접 바꾸면 그 점수로 고정되고, 나머지 문항이 합계에 맞춰 바뀝니다">배점<input class="in" id="f-pts" type="number" min="0" step="1" value="${p.pts || ''}"></label></div>
     <label class="f">문제<textarea class="in" id="f-q" rows="3" maxlength="1000">${esc(p.q)}</textarea></label>
     <div id="f-ans"></div>
     <label class="f"><span id="f-whyl">해설 (왜 정답인지)</span><textarea class="in" id="f-why" rows="3" maxlength="3000">${esc(p.why)}</textarea></label>
@@ -744,6 +776,7 @@ on('f-save', async () => {
     keepAns();
     const k = E.kind, shape = $('f-shape').value;
     const raw = { id: old.id, t: shape || k, ans: k, q: $('f-q').value, why: $('f-why').value, level: $('f-level').value, pts: +$('f-pts').value, img: E.img, video: $('f-video').value };
+    raw.fix = old.fix === true || (+$('f-pts').value !== old.pts);   // 배점을 직접 바꾸면 그 점수로 고정
     if (C.hasOpts(k)) {
       const keep = E.opts.map((t, j) => j).filter(j => E.opts[j].trim());   // 빈 칸은 빼고, 정답 번호도 그에 맞춰 옮깁니다
       raw.opts = keep.map(j => E.opts[j].trim());

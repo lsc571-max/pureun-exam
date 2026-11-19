@@ -322,3 +322,33 @@ test('부탁문: 고른 값과 형식 예시가 들어가고, 사진 자료와 �
   assert.ok(ex.every(C.isQuestion), '형식 예시에는 문제만 있어야 함(안내·마무리 쪽 없음) — AI가 문항 번호를 하나씩 밀려 쓰지 않게');
   assert.ok(!C.promptMake().includes('intro'));
 });
+
+test('배점 합계 맞추기: 고정한 문항은 그대로, 나머지는 비율대로 100점', async () => {
+  const C = await import('../public/core.js');
+  const q = (pts, extra = {}) => ({ t: 'choice', q: 'x', opts: ['a', 'b'], a: 0, level: '중', pts, ...extra });
+  // 50·50 + 고정 10·10 → 40·40·10·10
+  let r = C.balancePts([q(50), q(50), q(10, { fix: true }), q(10, { fix: true })]);
+  assert.deepEqual(r.pages.map(p => p.pts), [40, 40, 10, 10]); assert.ok(r.ok);
+  // 비율 유지(난이도별 배점): 3·4·5 → 합 100
+  r = C.balancePts([q(3, { level: '하' }), q(4), q(5, { level: '상' })]);
+  assert.equal(r.pages.reduce((t, p) => t + p.pts, 0), 100);
+  assert.ok(r.pages[0].pts < r.pages[1].pts && r.pages[1].pts < r.pages[2].pts);
+  // 똑같이 못 나누면 어려운 문항이 1점 더
+  r = C.balancePts([q(1, { level: '하' }), q(1, { level: '상' }), q(1)]);
+  assert.deepEqual(r.pages.map(p => p.pts), [33, 34, 33]);
+  // 이미 맞으면 바뀌지 않음
+  const same = [q(60), q(40)]; assert.deepEqual(C.balancePts(same).pages.map(p => p.pts), [60, 40]);
+  // 안내 쪽은 건드리지 않음
+  r = C.balancePts([{ t: 'intro', title: 'a' }, q(10), q(10)]); assert.deepEqual(r.pages.slice(1).map(p => p.pts), [50, 50]);
+  // 고정이 너무 크면 알려 줌
+  r = C.balancePts([q(99, { fix: true }), q(5), q(5)]); assert.equal(r.ok, false); assert.match(r.msg, /1점씩도/);
+  // 모두 고정했는데 합계가 다르면 알려 줌
+  r = C.balancePts([q(60, { fix: true }), q(50, { fix: true })]); assert.equal(r.ok, false);
+  // 100점에 맞추기: 고정까지 비율대로
+  const sc = C.scalePts([q(60, { fix: true }), q(50, { fix: true }), q(10)]);
+  assert.equal(sc.reduce((t, p) => t + p.pts, 0), 100); assert.ok(sc[0].fix, '고정 표시는 남음');
+  // 다른 목표 점수
+  assert.equal(C.balancePts([q(1), q(1), q(1)], 50).pages.reduce((t, p) => t + p.pts, 0), 50);
+  // 고정 표시는 normalizePage 를 거쳐도 남음
+  assert.equal(C.normalizePage(q(10, { fix: true })).fix, true); assert.equal(C.normalizePage(q(10)).fix, undefined);
+});

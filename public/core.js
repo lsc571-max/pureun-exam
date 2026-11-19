@@ -79,9 +79,47 @@ export function normalizePage(p) {
   o.level = LEVELS.includes(str(p.level)) ? str(p.level) : '중';
   const pts = Number(p.pts);
   o.pts = Number.isFinite(pts) && pts > 0 ? pts : 0;
+  if (p.fix === true) o.fix = true;   // 교수가 직접 정한 배점(합계를 맞출 때 바꾸지 않음)
   if (validImg(str(p.img))) o.img = str(p.img);
   if (str(p.video)) o.video = str(p.video);
   return o;
+}
+
+/* 배점 합계 맞추기
+   목표 점수(target)에서 고정(fix) 문항의 점수를 빼고, 남은 점수를 나머지 문항에 지금 배점의 비율대로 나눕니다(정수).
+   예: 50·50 이던 두 문항에 10점짜리 고정 문항 두 개를 더하면 → 40·40.
+   반올림으로 남거나 모자라는 점수는 어려운 문항부터 1점씩 조정합니다. 각 문항은 1점 이상. */
+const LV_RANK = { 상: 0, 중: 1, 하: 2 };
+function share(items, rest) {   // items: [{i, w, level}] → {i: 점수}
+  const eq = !items.some(x => x.w > 0), W = eq ? items.length : items.reduce((t, x) => t + Math.max(0, x.w), 0);
+  const raw = items.map(x => ({ ...x, v: rest * (eq ? 1 : Math.max(0, x.w)) / W }));
+  raw.forEach(x => { x.p = Math.max(1, Math.floor(x.v)); x.r = x.v - Math.floor(x.v); });
+  let left = rest - raw.reduce((t, x) => t + x.p, 0);
+  const order = (a, b) => (b.r - a.r) || ((LV_RANK[a.level] ?? 1) - (LV_RANK[b.level] ?? 1)) || (a.i - b.i);
+  for (const x of [...raw].sort(order)) { if (left <= 0) break; x.p++; left--; }
+  const hard = [...raw].sort((a, b) => ((LV_RANK[a.level] ?? 1) - (LV_RANK[b.level] ?? 1)) || (b.p - a.p) || (a.i - b.i));
+  while (left < 0) { const x = hard.find(y => y.p > 1); if (!x) break; x.p--; left++; }
+  return Object.fromEntries(raw.map(x => [x.i, x.p]));
+}
+// 고정하지 않은 문항으로 합계를 맞춥니다. 돌려줌: { pages, ok, total, msg }
+export function balancePts(pages, target = 100) {
+  const qs = pages.map((p, i) => ({ p, i })).filter(x => isQuestion(x.p));
+  const fixed = qs.filter(x => x.p.fix), free = qs.filter(x => !x.p.fix);
+  const fixedSum = fixed.reduce((t, x) => t + (Number(x.p.pts) || 0), 0), rest = target - fixedSum;
+  const total = qs.reduce((t, x) => t + (Number(x.p.pts) || 0), 0);
+  if (!qs.length) return { pages, ok: true, total: 0 };
+  if (!free.length) return { pages, ok: fixedSum === target, total, msg: fixedSum === target ? '' : `모든 문항의 배점을 고정했는데 합계가 ${fixedSum}점이에요.` };
+  if (rest < free.length) return { pages, ok: false, total, msg: `고정한 배점의 합(${fixedSum}점)이 커서, 나머지 ${free.length}문항에 1점씩도 줄 수 없어요.` };
+  const pts = share(free.map(x => ({ i: x.i, w: Number(x.p.pts) || 0, level: x.p.level })), rest);
+  const out = pages.map((p, i) => (i in pts && p.pts !== pts[i] ? { ...p, pts: pts[i] } : p));
+  return { pages: out, ok: true, total: target };
+}
+// 고정한 문항까지 모두 비율대로 줄이거나 늘려 목표 점수에 맞춥니다("100점에 맞추기")
+export function scalePts(pages, target = 100) {
+  const qs = pages.map((p, i) => ({ p, i })).filter(x => isQuestion(x.p));
+  if (qs.length > target || !qs.length) return pages;
+  const pts = share(qs.map(x => ({ i: x.i, w: Number(x.p.pts) || 0, level: x.p.level })), target);
+  return pages.map((p, i) => (i in pts ? { ...p, pts: pts[i] } : p));
 }
 
 export function ensureIds(pages, rand = Math.random) {
