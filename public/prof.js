@@ -372,9 +372,21 @@ function tabRun() {
         ${C.camOn(m) ? `<td class="num">${r.lv.face ? `<button class="mini" data-a="lv-show" data-sid="${esc(r.sid)}">${r.lv.face}회</button>` : ''}${r.lv.camOff ? ' <span class="pill mid">카메라 꺼짐</span>' : ''}</td>
 ` : ''}
         <td class="num">${r.lv.locks ? `${r.lv.locks}회` : ''}${isLocked(r.a) ? ` <button class="mini red" data-a="unlock" data-sid="${esc(r.sid)}">잠금 해제</button>` : ''}</td>
-        <td style="white-space:nowrap;text-align:right">${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">입장 취소</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button> ` : ''}${r.a ? `<button class="mini red" data-a="stu-del" data-sid="${esc(r.sid)}">지우기</button>` : ''}</td></tr>`).join('')}
+        <td style="white-space:nowrap;text-align:right">${pinCell(m, r)}${bind[r.sid] ? `<button class="mini" data-a="unbind" data-sid="${esc(r.sid)}">입장 취소</button> ` : ''}${r.a && r.a.submittedAt && m.status === 'running' ? `<button class="mini" data-a="unsubmit" data-sid="${esc(r.sid)}">제출 취소</button> ` : ''}${r.a ? `<button class="mini red" data-a="stu-del" data-sid="${esc(r.sid)}">지우기</button>` : ''}</td></tr>`).join('')}
       </table></div>${rows.length ? '' : '<div class="sm">아직 입장한 학생이 없어요. 학생이 반·학번·이름을 입력하고 들어오면 여기에 나타납니다.</div>'}</div>`;
 }
+// 앱 학생은 화면을 고정해야 시험을 봅니다. 고정이 안 되는 폰은 학생이 손을 들면 교수가 여기서 "고정 면제"를 누릅니다.
+const pinCell = (m, r) => {
+  if (!['open', 'running'].includes(m.status) || (r.a && r.a.submittedAt)) return r.a && r.a.pinFree ? '<span class="pill">고정 면제</span> ' : '';
+  return r.a && r.a.pinFree ? `<button class="mini" data-a="pinfree" data-v="0" data-sid="${esc(r.sid)}" title="면제 취소">고정 면제됨 ✕</button> `
+    : `<button class="mini" data-a="pinfree" data-v="1" data-sid="${esc(r.sid)}" title="화면 고정이 되지 않는 폰: 고정 없이 응시를 허락">고정 면제</button> `;
+};
+on('pinfree', async el => {
+  const sid = el.dataset.sid, on1 = el.dataset.v === '1', w = whoOf(sid) || {};
+  if (on1 && !(await confirmBox('화면 고정 없이 허락할까요?', `<b>${esc(w.name || sid)}</b> 학생이 화면 고정 없이 시험을 봅니다. 고정이 되지 않는 폰일 때만 허락하세요. 기록에 남습니다.`, '허락'))) return;
+  await be.set(`answers/${P.id}/${sid}/pinFree`, on1 ? true : null);
+  toast(on1 ? '화면 고정 없이 허락했어요.' : '고정 면제를 취소했어요.');
+});
 const setMeta = patch => { histBarrier(); return be.update('exams/' + P.id, patch); };
 on('ex-status', async el => {
   if (el.dataset.s === 'open' && C.validateBundle(P.pages).errors.length) return toast('문항에 고칠 곳이 있어요. 문항 탭에서 먼저 고쳐 주세요.');
@@ -1034,7 +1046,7 @@ function showDetail(sid, onlyWrong = false) {
       <td class="num">${it.sec ? C.fmtDur(it.sec) : ''}</td>
       <td class="num">${it.q.k === 'long' ? `<input class="in d-num" type="number" min="0" max="${it.q.pts}" step="0.5" value="${it.graded ? it.pts : ''}" data-q="${it.q.id}" aria-label="${it.no}번 점수" style="width:70px;font-size:15px;padding:5px 6px;text-align:right"> / ${it.q.pts}` : `${it.pts} / ${it.q.pts}`}</td></tr>`).join('') || '<tr><td colspan="7">틀린 문항이 없습니다.</td></tr>'}
     </table></div>
-    ${r.lv.count ? `<div class="sm">이탈 시각: ${r.lv.list.filter(isLeave).map(e => hhmmss(e.at) + (e.t === 'unpin' ? '(고정 풀림)' : e.t === 'nopin' ? '(고정 없이 계속)' : '')).join(', ')}</div>` : ''}`, { wide: true });
+    ${r.lv.count ? `<div class="sm">이탈 시각: ${r.lv.list.filter(isLeave).map(e => hhmmss(e.at) + (e.t === 'unpin' ? '(고정 풀림)' : e.t === 'nopin' ? '(고정 면제)' : '')).join(', ')}</div>` : ''}`, { wide: true });
   document.querySelectorAll('.d-num').forEach(inp => inp.addEventListener('change', async () => { if (inp.value === '') return; await setEssay(sid, inp.dataset.q, +inp.value); showDetail(sid, onlyWrong); if (P.tab === 'result') tabResult(); }));
 }
 on('d-filter', el => showDetail(el.dataset.sid, !!el.dataset.w));

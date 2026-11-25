@@ -38,7 +38,7 @@ export async function createBackend(config, opts = {}) {
       const me = at(db, `answers/${ks[1]}/${ks[2]}`) || {};
       if (['a', 'tm', 'ev', 'submittedAt'].includes(ks[3]) && !me.startedAt) throw deny();   // 시작 기록이 있어야 씀
       const own = me.until || (me.startedAt && ex.minutes ? me.startedAt + ex.minutes * 60000 + (ex.extra || 0) : Infinity);
-      if (!mine || ex.status !== 'running' || Date.now() >= ex.endAt + 20000 || Date.now() >= own + 20000 || (ks[3] === 'until' || ks[3] === 'unlock') || at(db, `answers/${ks[1]}/${ks[2]}/submittedAt`) != null) throw deny();
+      if (!mine || ex.status !== 'running' || Date.now() >= ex.endAt + 20000 || Date.now() >= own + 20000 || (ks[3] === 'until' || ks[3] === 'unlock' || ks[3] === 'pinFree') || at(db, `answers/${ks[1]}/${ks[2]}/submittedAt`) != null) throw deny();
       return;
     }
     throw deny();

@@ -42,6 +42,15 @@ const ctx = await browser.newContext({ viewport: { width: 412, height: 860 } });
 await ctx.addInitScript(() => { window.__cdMs = 80; });   // 5·4·3·2·1 을 테스트에서는 빠르게
 const errors = [];
 const watch = (pg, name) => { pg.on('pageerror', e => errors.push(`${name}: ${e.message}`)); pg.on('console', m => { if (m.type() === 'error' && !/fonts\.g|Failed to load resource/.test(m.text())) errors.push(`${name}: ${m.text()}`); }); };
+// 교수 화면의 "잠금 해제"를 누르고 학생 화면이 풀릴 때까지 기다립니다(누르는 순간 표가 다시 그려지면 한 번 더 누름)
+async function unlockAndWait(prof, stu, sid) {
+  for (let i = 0; i < 6; i++) {
+    const b = prof.locator(`[data-a="unlock"][data-sid="${sid}"]`);
+    if (await b.count()) await b.click().catch(() => {});
+    try { await stu.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 1500 }); return; } catch (e) {}
+  }
+  throw new Error('잠금을 풀지 못함');
+}
 const shot = async (pg, name) => { if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, name + '.png') }); };
 const db = pg => pg.evaluate(() => JSON.parse(localStorage.getItem('mockdb') || '{}'));
 const act = (pg, a, extra = '') => pg.click(`[data-a="${a}"]${extra}`);
@@ -643,10 +652,11 @@ try {
   assert.equal(d.exams[exId].status, 'running'); assert.ok(d.exams[exId].endAt > Date.now() + 120000);
   // 늦게 온 학생은 "안드로이드 앱"으로 응시한다고 보고, 앱이 해 주는 일을 흉내 냅니다.
   const late = await ctx.newPage(); watch(late, '늦은 학생(앱)');
+  const unlockLate = () => unlockAndWait(prof, late, '20261302');
   await late.addInitScript(() => {
     const st = window.__app = { dnd: false, auto: false, calls: [], hot: 0, face: { face: true, yaw: 0 } };
     window.__fakeFace = () => st.face;   // 카메라와 얼굴 감지기를 대신함
-    window.PureunApp = { thermalStatus: () => st.hot, isDndOn: () => st.dnd, canAutoDnd: () => st.auto, requestDndAccess: () => st.calls.push('requestDndAccess'), startLock: () => st.calls.push('startLock'), stopLock: () => st.calls.push('stopLock'), updateAvailable: () => !!st.upd, installUpdate: () => st.calls.push('installUpdate') };
+    window.PureunApp = { thermalStatus: () => st.hot, isDndOn: () => st.dnd, canAutoDnd: () => st.auto, requestDndAccess: () => st.calls.push('requestDndAccess'), startLock: () => st.calls.push('startLock'), stopLock: () => st.calls.push('stopLock'), isPinned: () => !!st.pinned, updateAvailable: () => !!st.upd, installUpdate: () => st.calls.push('installUpdate') };
   });
   await enter(late, 'B반', '20261302', '이영희');
   await late.waitForSelector('[data-a="open-exam"]');
@@ -669,7 +679,17 @@ try {
   await act(late, 'cam-test');
   await late.waitForSelector('.campv');                                 // 화면 가득 내 얼굴(테스트에서는 짧게)
   await late.waitForSelector('.campv', { state: 'detached', timeout: 5000 });
+  say('앱: 화면을 고정하지 않으면 시험을 시작할 수 없다');
+  await late.waitForSelector('[data-a="pin-now"]');
+  assert.match(await late.textContent('#app'), /화면을 고정해야 시험을 볼 수 있습니다/);
+  assert.ok(await late.isDisabled('[data-a="start"]'), '고정하지 않았는데 시작이 됨');
+  await act(late, 'pin-now');                                           // 고정 창이 뜨고, 학생이 "고정 안 함"을 누름
+  assert.ok((await late.evaluate(() => window.__app.calls)).includes('startLock'), '고정을 요청하지 않음');
+  await late.waitForTimeout(900);
+  assert.ok(await late.isDisabled('[data-a="start"]'), '고정을 거절했는데 시작이 됨');
+  await late.evaluate(() => { window.__app.pinned = true; });           // 이번에는 "고정"을 누름
   await late.waitForFunction(() => !document.querySelector('[data-a="start"]').disabled, null, { timeout: 5000 });
+  assert.match(await late.textContent('#app'), /화면이 고정되었습니다/);
   assert.match(await late.textContent('#app'), /자동으로 켜지고/);
   await act(late, 'start');
   await late.waitForSelector('#clock');                                // 못 본 학생은 응시 가능
@@ -680,7 +700,7 @@ try {
   await late.evaluate(() => window.onPureunEvent('back'));             // 앱으로 돌아오기만 해서는 가림이 안 풀림
   assert.ok(await late.isVisible('[data-a="repin"]'));
   await act(late, 'repin');
-  assert.equal((await late.evaluate(() => window.__app.calls)).filter(c => c === 'startLock').length, 2);
+  assert.equal((await late.evaluate(() => window.__app.calls)).filter(c => c === 'startLock').length, 3);   // 안내 화면 · 시험 시작 · 다시 고정
   await late.evaluate(() => window.onPureunEvent('pinned'));
   await late.waitForSelector('#guard:not([hidden]) [data-a="guard-ok"]');
   assert.match(await late.textContent('#guard'), /1회.*한 번 더 벗어나면 화면이 잠깁니다/s);
@@ -705,13 +725,12 @@ try {
   await late.evaluate(() => { window.__app.face = { face: true, yaw: 0 }; window.onPureunEvent('leave'); window.onPureunEvent('back'); });
   await late.waitForTimeout(1500);
   assert.match(await late.textContent('#guard'), /화면이 잠겼습니다/, '얼굴이 돌아오거나 앱에 돌아온 것만으로 잠금이 풀림');
-  await late.reload(); await late.waitForSelector('[data-a="open-exam"]'); await act(late, 'open-exam');   // 앱을 껐다 켜도 잠금은 그대로
+  await late.reload(); await late.evaluate(() => { window.__app.pinned = true; }); await late.waitForSelector('[data-a="open-exam"]'); await act(late, 'open-exam');   // 앱을 껐다 켜도 잠금은 그대로
   await late.waitForFunction(() => /화면이 잠겼습니다/.test(document.getElementById('guard').textContent) && !document.getElementById('guard').hidden);
   await prof.waitForSelector('#pband .alarm');
   assert.match(await prof.textContent('#pband'), /잠긴 학생 1명/);
   await shot(late, 's11-lock'); await shot(prof, 'p11-locked');
-  await prof.click('[data-a="unlock"][data-sid="20261302"]');
-  await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 5000 });
+  await unlockLate();
   d = await db(prof);
   const lateEv = Object.values(d.answers[exId]['20261302'].ev).map(e => e.t);
   assert.equal(lateEv.filter(t => t === 'face').length, 3); assert.equal(lateEv.filter(t => t === 'lock').length, 1); assert.ok(lateEv.includes('faceok'));
@@ -725,8 +744,7 @@ try {
   await late.waitForFunction(() => /화면이 잠겼습니다.*시험 화면을 2번 벗어났습니다/s.test(document.getElementById('guard').textContent) && !document.getElementById('guard').hidden);
   await shot(late, 's12-lockout');
   await prof.waitForSelector('#pband .alarm');   // 교수 화면에 잠김이 보인 뒤에 풂
-  await prof.click('[data-a="unlock"][data-sid="20261302"]');
-  await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 5000 });
+  await unlockLate();
   assert.ok(Object.values((await db(prof)).answers[exId]['20261302'].ev).some(e => e.t === 'lockout'));
   say('카메라: 기기가 뜨거워지면 저절로 꺼지고, "감시 중" 표시는 남는다');
   await late.evaluate(() => { window.__app.hot = 3; });
@@ -736,6 +754,17 @@ try {
   assert.ok(await late.isHidden('#guard'), '카메라가 꺼졌는데 화면이 가려짐: ' + (await late.textContent('#guard')) + ' / ' + JSON.stringify(Object.values((await db(prof)).answers[exId]['20261302'].ev).map(e => e.t)));
   assert.match(await late.textContent('.bar .watch'), /부정행위 감시 중/);
   await prof.waitForFunction(() => /카메라 꺼짐/.test([...document.querySelectorAll('#pmain tr')].find(r => /이영희/.test(r.textContent))?.textContent || ''));
+  say('앱: 시험 중 고정이 풀리면 바로 가려지고, 고정이 안 되는 폰은 교수가 "고정 면제"를 눌러 이어서 풀게 한다');
+  await late.evaluate(() => { window.__app.pinned = false; });
+  await late.waitForSelector('#guard:not([hidden]) [data-a="repin"]', { timeout: 5000 });
+  assert.match(await late.textContent('#guard'), /교수님께 말씀하세요/);
+  assert.equal(await late.locator('[data-a="nopin"]').count(), 0, '학생이 혼자 고정 없이 넘어가는 버튼이 남아 있음');
+  await prof.click('[data-a="pinfree"][data-sid="20261302"]'); await act(prof, 'dlg-yes');
+  await late.waitForFunction(() => document.getElementById('guard').hidden, null, { timeout: 5000 });
+  await prof.waitForSelector('[data-a="pinfree"][data-sid="20261302"][data-v="0"]');
+  await late.waitForTimeout(1200);
+  assert.ok(await late.isHidden('#guard'), '고정 면제 뒤에도 다시 가려짐');
+  assert.ok(Object.values((await db(prof)).answers[exId]['20261302'].ev).some(e => e.t === 'nopin'), '고정 면제가 기록되지 않음');
   await stu.reload(); await stu.waitForSelector('[data-a="open-exam"]'); await act(stu, 'open-exam');
   await stu.waitForFunction(() => /답안이 제출되었습니다/.test(document.body.textContent)); // 제출한 학생은 다시 못 풂
   await act(prof, 'ex-end'); await act(prof, 'dlg-yes'); await prof.waitForSelector('[data-a="ex-release"]');

@@ -123,6 +123,9 @@
               ".validate": "$q.matches(/^[A-Za-z0-9_-]{1,24}$/) && newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000"
             }
           },
+          "pinFree": {
+            ".validate": "newData.isBoolean()"
+          },
           "unlock": {
             ".validate": "newData.isNumber()"
           },

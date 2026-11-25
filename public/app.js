@@ -192,6 +192,7 @@ const deadline = (m, startedAt, until) => Math.min(m.endAt, until || (startedAt 
 function viewHome() {
   view = 'home'; exitFull();
   try { if (APP && APP.fullscreen) APP.fullscreen(false); } catch (e) {}
+  if (APP && !X && appCall('isPinned', false)) appCall('stopLock');   // 안내 화면에서 고정한 뒤 나가면 고정을 풉니다
   const list = Object.entries(S.exams).filter(([, m]) => m && ['open', 'running', 'ended'].includes(m.status)).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
   // 끝난 시험은 내가 봤는지 확인해서, 보지 않았으면 "미응시"로 보여 줍니다
   const ask = list.filter(([id, m]) => isOver(m) && S.took[id] === undefined);
@@ -214,7 +215,11 @@ on('open-exam', async el => {
   if (!isOver(m)) enterFull();   // 누르는 순간부터 전체 화면(안내 화면부터). 브라우저는 누르는 그때만 허락합니다.
   const my = (await be.get(`answers/${id}/${S.me.sid}`)) || {};
   // wait: 교수가 시작하기 전에 대기실에 들어온 학생 → 교수가 시작하면 5·4·3·2·1 뒤 모두 함께 시작
-  N = { id, checked: false, my, wait: m.status === 'open', going: false };
+  if (N && N.off) N.off();
+  N = { id, checked: false, my, wait: m.status === 'open', going: false, pinFree: !!my.pinFree };
+  // 교수가 "화면 고정 없이 허용"을 누르면(고정이 안 되는 폰) 바로 반영합니다
+  const mineN = N;
+  N.off = be.on(`answers/${id}/${S.me.sid}/pinFree`, v => { if (N !== mineN) return; N.pinFree = !!v; if (view === 'notice') keepScroll(viewNotice); });
   if (my.submittedAt) return viewDone();
   if (isOver(m)) return !my.startedAt ? viewMissed(id) : m.released ? openReview(id, 'result') : viewDone();
   if (m.status === 'running' && my.startedAt) return be.now() < deadline(m, my.startedAt, my.until) ? startExam() : viewDone();   // 이어서 풀기
@@ -233,7 +238,9 @@ function viewNotice() {
   const running = m.status === 'running';
   const needApp = C.appOnlyOn(m) && IS_ANDROID && !APP;   // 안드로이드는 앱으로만 응시
   const camReady = !C.camOn(m) || N.camOk || N.camSkip;
-  const prepared = N.checked && dndOn() && !needApp && camReady, ready = running && prepared;
+  // 앱: 화면을 고정해야(또는 교수가 고정 없이 허용해야) 시작할 수 있습니다
+  const pinned = !!appCall('isPinned', false), pinReady = !APP || pinned || N.pinFree;
+  const prepared = N.checked && dndOn() && !needApp && camReady && pinReady, ready = running && prepared;
   const nt = m.notice || {};
   const dndBox = !APP ? `<div class="box info">전화와 알림이 시험을 방해하지 않게 <b>방해 금지 모드</b>를 켜 주세요.${/iPhone|iPad/i.test(navigator.userAgent) ? '\n아이폰은 <b>사용법 유도</b>(설정 → 손쉬운 사용)를 켜고 옆 버튼을 세 번 누르면 시험 화면이 고정됩니다.' : ''}</div><button class="btn gh" style="flex:none" data-a="dnd">방해 금지 모드 켜는 방법</button>`
     : appCall('canAutoDnd', false) ? '<div class="box ok">시험을 시작하면 <b>방해 금지 모드가 자동으로 켜지고</b>, 끝나면 원래대로 돌아갑니다.</div>'
@@ -249,7 +256,7 @@ function viewNotice() {
         <li>시험 화면을 벗어나면 <b>횟수와 시각이 기록</b>됩니다.${m.leaveLock === 0 ? '' : ` <b>${Number.isFinite(m.leaveLock) && m.leaveLock > 0 ? m.leaveLock : 2}번</b> 벗어나면 화면이 잠기고, 교수님이 풀어 주셔야 합니다.`}</li>
         <li>화면 캡처·녹화·복사는 금지입니다.</li>
         <li>답은 고르는 즉시 저장됩니다. 앱이 꺼져도 이어서 풀 수 있습니다.</li>
-        ${APP ? '<li>시작하면 <b>화면 고정</b>을 묻는 창이 뜹니다. <b>확인</b>을 눌러 주세요. 고정이 풀리면 기록되고 문제가 가려집니다.</li>' : ''}
+        ${APP ? '<li>시험 전에 <b>화면을 고정</b>해야 합니다. 고정하지 않으면 시험을 볼 수 없고, 시험 중에 고정이 풀리면 기록되고 문제가 가려집니다.</li>' : ''}
       </ul>
       ${needApp ? `<div class="box no"><b>이 시험은 안드로이드 앱으로만 볼 수 있습니다.</b>\n아래에서 앱을 내려받아 설치한 뒤, 앱에서 다시 입장해 주세요.</div><a class="btn am" style="flex:none;text-decoration:none" href="${APK_URL}">안드로이드 앱 내려받기</a>` : dndBox}
       ${!C.camOn(m) || needApp ? '' : N.camOk ? '<div class="box ok">카메라가 확인되었습니다. 시험 중에는 얼굴이 화면을 향하게 해 주세요.</div>'
@@ -257,6 +264,9 @@ function viewNotice() {
         : `<div class="box info">이 시험은 <b>전면 카메라</b>로 얼굴이 화면을 보고 있는지 확인합니다. 영상은 저장되거나 전송되지 않습니다. 얼굴이 몇 초 넘게 보이지 않거나 고개를 돌리면 경고가 기록되고, ${(Number.isInteger(m.camLock) && m.camLock >= 0 && m.camLock <= 20 ? m.camLock : C.CAM_DEF.camLock) ? `경고가 ${Number.isInteger(m.camLock) && m.camLock >= 0 && m.camLock <= 20 ? m.camLock : C.CAM_DEF.camLock}회 쌓이면 화면이 잠깁니다` : '경고는 교수님 화면에 남습니다'}.\n아래 버튼을 누르면 3초 동안 내 얼굴이 화면에 보입니다.</div>
           ${N.camErr ? '<div class="box no"><b>카메라를 켤 수 없어요.</b> 카메라 사용을 허용했는지 확인하고 다시 눌러 주세요. 계속 안 되면 교수님께 말씀하세요.</div>' : ''}
           <button class="btn am" style="flex:none" data-a="cam-test">카메라 확인하기</button>${N.camErr ? '<button class="btn gh" style="flex:none" data-a="cam-skip">카메라 없이 시작 (교수님께 표시됨)</button>' : ''}`}
+      ${!APP || needApp ? '' : pinned ? '<div class="box ok">화면이 고정되었습니다.</div>'
+        : N.pinFree ? '<div class="box ok">교수님이 <b>화면 고정 없이</b> 응시를 허락했습니다. 기록에 남습니다.</div>'
+        : '<div class="box warn"><b>화면을 고정해야 시험을 볼 수 있습니다.</b>\n아래 버튼을 누르고, 뜨는 창에서 <b>고정(확인)</b>을 눌러 주세요.\n고정이 되지 않는 폰이면 손을 들고 교수님께 말씀하세요.</div><button class="btn am" style="flex:none" data-a="pin-now">화면 고정하기</button>'}
       <button class="check ${N.checked ? 'on' : ''}" data-a="agree" aria-pressed="${N.checked}"><i>✓</i>확인했습니다</button>
       <div class="sm">${N.wait ? (prepared ? '준비가 끝났습니다. 이 화면에서 기다려 주세요.' : '위의 확인을 마치고 기다려 주세요.') : ''}</div>
     </div>
@@ -267,9 +277,10 @@ function viewNotice() {
   if (N.wait && ready) go();   // 대기실 학생: 교수가 시작했고 확인도 끝났으면 바로 5·4·3·2·1
   clearInterval(noticeT);
   // 앱: 방해 금지 설정을 바꾸고 돌아오면 안내와 시작 버튼을 바로 고쳐 보여 줍니다
-  const dndShown = `${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}`;
-  if (APP) noticeT = setInterval(() => { if (view !== 'notice') return clearInterval(noticeT); if (`${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}` !== dndShown) keepScroll(viewNotice); }, 1000);
+  const appState = () => `${appCall('isDndOn', false)}${appCall('canAutoDnd', false)}${appCall('isPinned', false)}`, shown = appState();
+  if (APP) noticeT = setInterval(() => { if (view !== 'notice') return clearInterval(noticeT); if (appState() !== shown) keepScroll(viewNotice); }, 700);
 }
+on('pin-now', () => { try { APP.startLock(); } catch (e) {} });   // 안드로이드가 "화면을 고정할까요?"를 묻습니다
 on('agree', () => { N.checked = !N.checked; const y = document.querySelector('.body').scrollTop; viewNotice(); document.querySelector('.body').scrollTop = y; });
 on('dnd', () => {
   if (APP) { if (appCall('canAutoDnd', false)) return toast('시험을 시작하면 자동으로 켜집니다.'); try { APP.requestDndAccess(); } catch (e) {} return; }
@@ -330,6 +341,12 @@ async function startExam() {
     });
     X.store.load(mine.a || {});
     X.unsubs.push(be.on(path + '/sess', v => { if (X && !X.done && v && v !== X.sess) otherWindow(); }));
+    X.pinFree = !!mine.pinFree; X.pinAt = Date.now() + 5000;   // (시작 직후 고정 창이 떠 있을 수 있어 5초 뒤부터 확인)
+    if (APP && X.pinFree && !appCall('isPinned', false) && !mine.sess) logEv('nopin');   // 고정 없이 시작함을 기록
+    X.unsubs.push(be.on(path + '/pinFree', v => {   // 교수가 "화면 고정 없이 허용"
+      if (!X) return; X.pinFree = !!v;
+      if (X.pinFree && X.unpinned) { clearInterval(X.pinPoll); logEv('nopin'); X.unpinned = false; X.away = false; hideGuard(); resumeTime(); toast('교수님이 화면 고정 없이 응시를 허락했습니다.', 4000); }
+    }));
     X.unsubs.push(be.on(path + '/unlock', v => {   // 교수가 잠긴 화면을 풀어 줌
       if (!X) return; X.unlockN = v || 0;
       if (!locked() && X.guardKind === 'lock') { logEv('unlocked'); X.camWarn = 0; X.leaveWarn = 0; hideGuard(); if (X.watch) X.watch.reset(); resumeTime(); toast('교수님이 잠금을 풀었습니다. 계속 푸세요.', 4000); }
@@ -369,7 +386,9 @@ function tick() {
   if (!X || X.done) return;
   const m = S.exams[X.id];
   if (!m || m.status !== 'running') return finish(true);
-  if (++X.ticks % 40 === 0) { saveTime(); camPolicy(); }   // 20초마다 풀이 시간을 저장하고, 발열·배터리를 확인
+  if (++X.ticks % 40 === 0) { saveTime(); camPolicy(); }
+  // 앱: 화면 고정이 풀려 있으면 바로 가립니다 (교수가 고정 없이 허용한 학생은 제외)
+  if (APP && !X.pinFree && !X.unpinned && Date.now() > X.pinAt && !appCall('isPinned', true)) window.onPureunEvent('unpin');   // 20초마다 풀이 시간을 저장하고, 발열·배터리를 확인
   const left = deadline(m, X.startedAt, X.until) - be.now();
   const c = $('clock'); if (c) { c.textContent = C.fmtClock(left); c.classList.toggle('low', left < 5 * 60000); }
   if (left <= 0) finish(true);
@@ -659,10 +678,10 @@ window.onPureunEvent = t => {
   if (t === 'back') return cameBack();
   if (t === 'pinned') { if (X && !X.done && X.unpinned) { X.unpinned = false; X.away = true; cameBack(); } return; }
   if (t === 'unpin') {
-    if (!X || X.done) return;
+    if (!X || X.done || X.pinFree) return;
     if (!X.unpinned) { X.unpinned = true; X.away = false; wentAway('unpin'); }
     // 다시 고정할 때까지 문제를 가립니다
-    return showGuard(`<div class="h1">화면 고정이 풀렸습니다</div><div class="txt">풀린 시각이 기록되었습니다.\n아래 버튼을 누르고 <b>확인</b>을 눌러 화면을 다시 고정해야 시험을 계속할 수 있습니다.</div><button class="btn am" style="flex:none" data-a="repin">화면 고정 다시 켜기</button>`);
+    return showGuard(`<div class="h1">화면 고정이 풀렸습니다</div><div class="txt">풀린 시각이 기록되었습니다.\n아래 버튼을 누르고 <b>고정(확인)</b>을 눌러 화면을 다시 고정해야 시험을 계속할 수 있습니다.</div><button class="btn am" style="flex:none" data-a="repin">화면 고정 다시 켜기</button><div class="sm" style="color:#c9d6cf">고정이 되지 않는 폰이면 손을 들고 교수님께 말씀하세요. 교수님이 허락하면 이어서 풀 수 있습니다.</div>`);
   }
   wentAway('leave');
 };
@@ -674,12 +693,9 @@ on('repin', () => {
   X.pinPoll = setInterval(() => {
     if (!X || !X.unpinned) return clearInterval(X && X.pinPoll);
     if (appCall('isPinned', false)) { clearInterval(X.pinPoll); window.onPureunEvent('pinned'); }
-    else if (++n === 30 && !$('nopin')) {   // 15초가 지나도 고정이 안 되는 기기: 기록을 남기고 계속할 수 있게
-      $('guard').firstElementChild.insertAdjacentHTML('beforeend', '<button class="btn gh" style="flex:none" id="nopin" data-a="nopin">고정이 안 돼요 — 고정 없이 계속 (기록됨)</button>');
-    }
+    else if (++n > 600) clearInterval(X.pinPoll);   // 5분 뒤 확인 중단(다시 누르면 다시 확인). 고정이 안 되는 폰은 교수가 허용합니다.
   }, 500);
 });
-on('nopin', () => { if (!X) return; clearInterval(X.pinPoll); logEv('nopin'); X.unpinned = false; X.away = false; hideGuard(); resumeTime(); });
 for (const ev of ['copy', 'cut', 'paste', 'contextmenu', 'dragstart', 'drop'])
   document.addEventListener(ev, e => { if (X) e.preventDefault(); });
 document.addEventListener('selectstart', e => { if (X && !e.target.closest?.('textarea,input')) e.preventDefault(); });

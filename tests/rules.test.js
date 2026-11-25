@@ -265,6 +265,11 @@ test('풀이 시간은 자기 것만 쓰고, 잠긴 화면은 교수만 풀 수 
   await assertFails(ans('u1', 'run').update({ unlock: 99 }));
   await assertSucceeds(prof().ref(`answers/run/${A}/unlock`).set(1));           // 교수가 풀어 줌
   await assertSucceeds(ans('u1', 'run').child('unlock').get());                 // 학생 화면이 풀림을 알 수 있음
+  await assertFails(ans('u1', 'run').child('pinFree').set(true));               // 화면 고정 면제는 학생이 스스로 못 함
+  await assertFails(ans('u1', 'run').update({ pinFree: true }));
+  await assertSucceeds(prof().ref(`answers/run/${A}/pinFree`).set(true));        // 교수가 허락
+  await assertSucceeds(ans('u1', 'run').child('pinFree').get());
+  await assertFails(prof().ref(`answers/run/${A}/pinFree`).set('yes'));           // 참/거짓만
 });
 
 test('이름·반은 시험을 시작할 때 답안에 한 번 적고, 입장 기록과 같아야 한다', async () => {
